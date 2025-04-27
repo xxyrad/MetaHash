@@ -2,7 +2,7 @@
 
 ---
 
-## Abstract
+## Believe
 
 Merit is a Bittensor subnet (NetUID 73) designed to reward miner participation across the broader Bittensor ecosystem.  
 Validators on Merit assess registered miners' performance in other subnets, measure their active participation, and assign emissions based on their relative contributions.  

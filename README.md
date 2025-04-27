@@ -1,118 +1,95 @@
 # Merit Subnet
 
-Merit Subnet is a custom [Bittensor](https://docs.bittensor.com/) subnet that rewards miners based on their participation and performance across the Bittensor network.
+---
+
+## Overview
+
+**Merit** is a Bittensor Subnet (NetUID 73) designed to incentivize and reward miner participation across the broader Bittensor network.  
+Validators on Merit measure miners' contributions to other subnets and reward based on verified uptime, cross-subnet incentive, and activity.
+
+Merit establishes a **trust and reputation layer** that complements the Bittensor ecosystem, driving fairness, growth, and decentralization.
 
 ---
 
-## 📦 Project Structure
+## Features
 
-```
-merit/
-├── setup.py
-├── requirements.txt
-├── LICENSE
-├── README.md
-├── merit/
-│   ├── __init__.py
-│   ├── config/
-│   │   └── merit_config.py
-│   ├── protocol/
-│   │   └── merit_protocol.py
-│   ├── neuron/
-│   │   ├── miner.py
-│   │   └── validator.py
-│   ├── scripts/
-│   │   ├── run_miner.py
-│   │   └── run_validator.py
-│   ├── tests/
-│   │   ├── test_protocol.py
-│   │   └── test_bmps_calculation.py
-└── epoch_results/ (auto-created)
-```
+- 🔹 Dynamic cross-subnet miner scoring (BMPS - Bittensor Miner Participation Score)
+- 🔹 Strict miner validation (TOTP verification, TCP preflight)
+- 🔹 Robust handling of invalid or unreachable miners
+- 🔹 Incentive ×1000 scaling for fair scoring
+- 🔹 Uptime bonuses (+1.0 success / -0.25 penalty failure)
+- 🔹 Fully dynamic weights_version fetching
+- 🔹 Automatic pruning of old epochs (48 file retention)
 
 ---
 
-## ⚙️ Installation
+## Quickstart
 
-From the project root:
+### 1. Clone the repository
 
 ```bash
-pip install .
+git clone https://github.com/fx-integral/merit.git
+cd merit
 ```
 
-Make sure your environment includes:
-- `bittensor>=9.4.0`
-- `pyotp>=2.8.0`
-
----
-
-## 🚀 Running Miner
+### 2. Set up a Python environment
 
 ```bash
-python -m merit.scripts.run_miner
+python -m venv venv
+source venv/bin/activate
+pip install uv
+uv pip install -r requirements.txt
 ```
-
-- Miner listens for ping requests and responds with TOTP tokens.
-- Axon server automatically binds to external IP and port.
 
 ---
 
-## 🚀 Running Validator
+## Running a Miner
 
 ```bash
-python -m merit.scripts.run_validator
+python -m merit.scripts.run_miner \
+  --subtensor.network finney \
+  --wallet.name {your_wallet_name} \
+  --wallet.hotkey {your_hotkey_name} \
+  --netuid 73 \
+  --axon.port {your_port} \
+  --logging.debug
 ```
 
-- Validator fetches Metagraph.
-- Sends PingRequests to miners and validates TOTP responses.
-- Calculates BMPS (Bittensor Miner Participation Score) based on incentive and ping success.
-- Normalizes weights and submits them to the chain per epoch.
-- Saves detailed JSON results every epoch.
-
 ---
 
-## 🔍 Key Features
-
-| Feature | Description |
-|---------|-------------|
-| **Ping Validation** | Verifies miners using pyotp TOTP tokens. |
-| **BMPS Calculation** | Based on incentives across all subnets except netuid 0 and 73. |
-| **Crash Recovery** | If validator crashes mid-epoch, resumes safely using `.merit_state.json`. |
-| **Miner Health Tracking** | Persistent miner health score from 1.0 to 10.0 (rewards uptime and stability). |
-| **Epoch Results** | JSON logs per epoch stored in `epoch_results/`. Only last 48 epochs kept. |
-| **Auto-Cleanup** | Older epochs pruned automatically to save space. |
-
----
-
-## ⚙️ Configuration
-
-Edit `merit/config/merit_config.py` to adjust:
-
-- `TEMPO`: Blocks per epoch (default 360).
-- `PING_TIMEOUT`: Single ping timeout (default 10s).
-- `PING_RETRIES`: Number of retries per miner (default 2).
-- `HEALTH_INITIAL`, `HEALTH_MAX`, `HEALTH_INCREASE`, `HEALTH_DECREASE`: Health scoring system.
-- `MAX_EPOCH_FILES`: Maximum number of epoch result JSONs to retain (default 48).
-- `NETWORK`: Network name (default "finney").
-
----
-
-## 🧪 Running Tests
+## Running a Validator
 
 ```bash
-python -m unittest discover merit/tests
+python -m merit.scripts.run_validator \
+  --subtensor.network finney \
+  --wallet.name {your_wallet_name} \
+  --wallet.hotkey {your_hotkey_name} \
+  --netuid 73 \
+  --logging.debug
 ```
 
-Covers:
-- PingRequest / PingResponse field integrity.
-- Normalization of BMPS scoring.
-- Protection against division-by-zero scenarios.
+---
+
+## Documentation
+
+- 📄 [Whitepaper](./WHITEPAPER.md)
+- 🚀 [Roadmap](./ROADMAP.md)
+- 🛠️ [Miner Setup Guide](./MINER_SETUP.md)
+- 🛠️ [Validator Setup Guide](./VALIDATOR_SETUP.md)
 
 ---
 
-## 🛡️ License
+## License
 
-MIT License.
+Distributed under the [MIT License](./LICENSE.md).
 
 ---
 
+## Contributing
+
+Contributions are welcome!  
+Please review the [CONTRIBUTING.md](./CONTRIBUTING.md) (coming soon) before submitting pull requests.
+
+---
+
+# End of Document
