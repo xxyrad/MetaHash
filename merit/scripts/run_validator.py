@@ -7,6 +7,7 @@ def main():
     parser = argparse.ArgumentParser()
     bt.wallet.add_args(parser)
     bt.subtensor.add_args(parser)
+    bt.axon.add_args(parser)  # Future-proofing (currently validator doesn't bind axon)
     bt.logging.add_args(parser)
 
     parser.add_argument("--netuid", type=int, required=True, help="Subnet netuid to validate.")
