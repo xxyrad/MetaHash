@@ -1,3 +1,5 @@
+# merit/neuron/validator.py
+
 import bittensor as bt
 import pyotp
 import asyncio
@@ -5,6 +7,7 @@ import os
 import json
 import hashlib
 import base64
+import ipaddress
 from merit.protocol.merit_protocol import PingRequest, PingResponse
 from merit.config import merit_config
 
@@ -53,8 +56,23 @@ class Validator:
         with open(merit_config.HEALTH_FILE, "w") as f:
             json.dump(self.health, f, indent=4)
 
+    def is_valid_public_ipv4(self, ip: str) -> bool:
+        try:
+            parsed_ip = ipaddress.IPv4Address(ip)
+            return parsed_ip.is_global
+        except ipaddress.AddressValueError:
+            return False
+
     async def ping_miner(self, uid: int, hotkey: str) -> bool:
+        """
+        Sends a PingRequest and validates the TOTP response.
+        """
         axon = self.metagraph.axons[uid]
+
+        if not self.is_valid_public_ipv4(axon.ip) or axon.port == 0:
+            bt.logging.debug(f"Skipping ping for hotkey {hotkey}: Invalid or non-public IPv4 address {axon.ip}:{axon.port}")
+            return False
+
         try:
             request = PingRequest(hotkey=hotkey)
             response = await self.dendrite.forward(
@@ -66,22 +84,33 @@ class Validator:
             if isinstance(response, PingResponse):
                 hashed = hashlib.sha256(hotkey.encode('utf-8')).digest()
                 base32_secret = base64.b32encode(hashed).decode('utf-8').strip('=')
+
                 totp = pyotp.TOTP(base32_secret)
                 if totp.verify(response.token, valid_window=1):
                     return True
-
         except Exception as e:
             bt.logging.warning(f"Ping failed for {hotkey}: {e}")
 
         return False
 
     async def _background_pinger(self):
+        """
+        Background task: ping all miners periodically.
+        """
         while True:
             try:
                 self.metagraph = self.subtensor.metagraph(netuid=self.netuid)
 
                 for uid in range(len(self.metagraph.hotkeys)):
+                    if self.metagraph.validator_permit[uid]:
+                        continue  # Skip validators
+
                     hotkey = self.metagraph.hotkeys[uid]
+
+                    axon = self.metagraph.axons[uid]
+                    if not self.is_valid_public_ipv4(axon.ip) or axon.port == 0:
+                        continue  # Skip bad IPs
+
                     success = await self.ping_miner(uid, hotkey)
                     self.latest_ping_success[hotkey] = success
 
@@ -93,6 +122,9 @@ class Validator:
             await asyncio.sleep(self.ping_frequency)
 
     async def run(self):
+        """
+        Validator main loop.
+        """
         bt.logging.info("Validator running...")
 
         if self.ping_frequency:
@@ -102,62 +134,73 @@ class Validator:
             while True:
                 self.metagraph = self.subtensor.metagraph(netuid=self.netuid)
 
+                uids = []
+                scores = []
+
                 results = []
-                bmps_scores = []
 
                 for uid in range(len(self.metagraph.hotkeys)):
+                    if self.metagraph.validator_permit[uid]:
+                        bt.logging.debug(f"Skipping validator hotkey {self.metagraph.hotkeys[uid]}")
+                        continue
+
                     hotkey = self.metagraph.hotkeys[uid]
                     coldkey = self.metagraph.coldkeys[uid]
                     incentive = float(self.metagraph.incentive[uid])
 
-                    if self.ping_frequency:
-                        ping_success = self.latest_ping_success.get(hotkey, False)
-                    else:
-                        ping_success = await self.ping_miner(uid, hotkey)
+                    axon = self.metagraph.axons[uid]
 
                     bmps = incentive
-                    if ping_success:
-                        bmps += merit_config.PING_SUCCESS_BONUS
+
+                    # If axon invalid, force BMPS to 0
+                    if not self.is_valid_public_ipv4(axon.ip) or axon.port == 0:
+                        bt.logging.debug(f"Invalid axon for hotkey {hotkey}, setting BMPS=0.0")
+                        bmps = 0.0
                     else:
-                        bmps -= merit_config.PING_FAILURE_PENALTY
+                        # Adjust by ping results
+                        ping_success = self.latest_ping_success.get(hotkey, False) if self.ping_frequency else await self.ping_miner(uid, hotkey)
+
+                        if bmps > 0.0:
+                            if ping_success:
+                                bmps += merit_config.PING_SUCCESS_BONUS
+                            else:
+                                bmps -= merit_config.PING_FAILURE_PENALTY
+                        else:
+                            bt.logging.debug(f"Hotkey {hotkey} has BMPS <= 0. Skipping ping reward adjustment.")
+
+                    uids.append(uid)
+                    scores.append(max(bmps, 0.0))
 
                     results.append({
                         "hotkey": hotkey,
                         "coldkey": coldkey,
                         "average_incentive": incentive,
-                        "ping_success": ping_success,
                         "bmps_score": bmps,
+                        "valid_ip": self.is_valid_public_ipv4(axon.ip) and axon.port != 0,
                     })
 
                     self.state[hotkey] = bmps
-                    bmps_scores.append(max(bmps, 0.0))
-
-                    prev_health = self.health.get(hotkey, merit_config.HEALTH_INITIAL)
-                    if ping_success:
-                        new_health = min(prev_health + merit_config.HEALTH_INCREASE, merit_config.HEALTH_MAX)
-                    else:
-                        new_health = max(prev_health - merit_config.HEALTH_DECREASE, 0)
-                    self.health[hotkey] = new_health
-
                     self._save_state()
-                    self._save_health()
 
-                total_bmps = sum(bmps_scores)
-                normalized_weights = [score / total_bmps if total_bmps > 0 else 0 for score in bmps_scores]
+                total_bmps = sum(scores)
+                normalized_weights = [score / total_bmps if total_bmps > 0 else 0 for score in scores]
 
-                self.subtensor.set_weights(
-                    wallet=self.wallet,
-                    netuid=self.netuid,
-                    uids=list(range(len(self.metagraph.hotkeys))),
-                    weights=normalized_weights,
-                )
+                if len(normalized_weights) > 0:
+                    self.subtensor.set_weights(
+                        wallet=self.wallet,
+                        netuid=self.netuid,
+                        uids=uids,
+                        weights=normalized_weights,
+                    )
+                    bt.logging.success(f"Epoch {self.subtensor.get_current_block()}: Weights set successfully.")
+                else:
+                    bt.logging.warning("No valid miners found to set weights for.")
 
+                # Save epoch results
                 block = self.subtensor.get_current_block()
                 path = os.path.join(merit_config.EPOCH_RESULTS_DIR, f"epoch_{block}.json")
                 with open(path, "w") as f:
                     json.dump(results, f, indent=4)
-
-                bt.logging.success(f"Epoch {block}: Weights set and results saved.")
 
                 self._clear_state()
                 self._prune_epoch_results()
@@ -172,6 +215,9 @@ class Validator:
                 await self.ping_task
 
     def _prune_epoch_results(self):
+        """
+        Prune old epoch files, keeping only the last N epochs.
+        """
         files = sorted(
             [f for f in os.listdir(merit_config.EPOCH_RESULTS_DIR) if f.startswith("epoch_") and f.endswith(".json")],
             key=lambda x: os.path.getmtime(os.path.join(merit_config.EPOCH_RESULTS_DIR, x))
