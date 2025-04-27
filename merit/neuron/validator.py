@@ -9,22 +9,19 @@ from merit.protocol.merit_protocol import PingRequest, PingResponse
 from merit.config import merit_config
 
 class Validator:
-    def __init__(self, network: str, wallet_name: str, wallet_hotkey: str, netuid: int, ping_frequency=None):
+    def __init__(self, config: bt.Config):
         bt.logging.info("Initializing Validator...")
 
-        self.network = network
-        self.wallet_name = wallet_name
-        self.wallet_hotkey = wallet_hotkey
-        self.netuid = netuid
-        self.ping_frequency = ping_frequency
-
-        self.wallet = bt.wallet(name=self.wallet_name, hotkey=self.wallet_hotkey)
-        self.subtensor = bt.subtensor(network=self.network)
+        self.wallet = bt.wallet(config=config)
+        self.subtensor = bt.subtensor(config=config)
         self.dendrite = bt.dendrite(wallet=self.wallet)
+
+        self.netuid = config.netuid
+        self.ping_frequency = config.ping_frequency
 
         os.makedirs(merit_config.EPOCH_RESULTS_DIR, exist_ok=True)
 
-        self.latest_ping_success = {}  # Tracks last ping result per miner
+        self.latest_ping_success = {}
         self.ping_task = None
 
         self.state = self._load_state()

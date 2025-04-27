@@ -7,34 +7,26 @@ from merit.protocol.merit_protocol import PingRequest, PingResponse
 from merit.config import merit_config
 
 class Miner:
-    def __init__(self, network: str, wallet_name: str, wallet_hotkey: str, netuid: int):
+    def __init__(self, config: bt.Config):
         bt.logging.info("Initializing Miner...")
 
-        # Save parameters
-        self.network = network
-        self.wallet_name = wallet_name
-        self.wallet_hotkey = wallet_hotkey
-        self.netuid = netuid
+        self.wallet = bt.wallet(config=config)
+        self.subtensor = bt.subtensor(config=config)
+        self.axon = bt.axon(wallet=self.wallet, config=config)
 
-        # Initialize wallet and subtensor
-        self.wallet = bt.wallet(name=self.wallet_name, hotkey=self.wallet_hotkey)
-        self.subtensor = bt.subtensor(network=self.network)
+        self.netuid = config.netuid
 
-        # Set up Axon server
-        self.axon = bt.axon(wallet=self.wallet)
-        self.axon.attach(self.handle_ping_request)  # attach handler
-
-        # Start Axon server
+        self.axon.attach(self.handle_ping_request)
         self.axon.start()
+
         bt.logging.success(f"Miner Axon started at {self.axon.external_ip}:{self.axon.external_port}")
 
     async def handle_ping_request(self, synapse: PingRequest) -> PingResponse:
         """
-        Handles incoming PingRequest and returns a TOTP token.
+        Handles incoming PingRequest and returns TOTP token.
         """
         hotkey = self.wallet.hotkey.ss58_address
 
-        # Hash the hotkey into a stable TOTP secret
         hashed = hashlib.sha256(hotkey.encode('utf-8')).digest()
         base32_secret = base64.b32encode(hashed).decode('utf-8').strip('=')
 

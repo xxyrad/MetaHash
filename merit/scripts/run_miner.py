@@ -1,21 +1,14 @@
-import argparse
+import bittensor as bt
+import asyncio
 from merit.neuron.miner import Miner
 
 def main():
-    parser = argparse.ArgumentParser(description="Run Merit Miner")
-    parser.add_argument("--subtensor_network", type=str, default="finney", help="Subtensor network name or endpoint URL")
-    parser.add_argument("--wallet_name", type=str, required=True, help="Wallet name")
-    parser.add_argument("--wallet_hotkey", type=str, required=True, help="Wallet hotkey")
-    parser.add_argument("--netuid", type=int, required=True, help="Network UID")
+    parser = bt.ArgumentParser()
+    parser.add_argument("--netuid", type=int, help="Subnet netuid to mine on.")
+    config = bt.config(parser=parser)
+    bt.logging(config=config)
 
-    args = parser.parse_args()
-
-    miner = Miner(
-        network=args.subtensor_network,
-        wallet_name=args.wallet_name,
-        wallet_hotkey=args.wallet_hotkey,
-        netuid=args.netuid,
-    )
+    miner = Miner(config=config)
     miner.run()
 
 if __name__ == "__main__":
