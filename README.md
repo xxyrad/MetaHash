@@ -72,23 +72,23 @@ python -m merit.scripts.run_validator \
 
 ## Documentation
 
-- 📄 [Whitepaper](./WHITEPAPER.md)
-- 🚀 [Roadmap](./ROADMAP.md)
-- 🛠️ [Miner Setup Guide](./MINER_SETUP.md)
-- 🛠️ [Validator Setup Guide](./VALIDATOR_SETUP.md)
+- 📄 [Whitepaper](./whitepaper.md)
+- 🚀 [Roadmap](./roadmap.md)
+- 🛠️ [Miner Setup Guide](./docs/miner_setup.md)
+- 🛠️ [Validator Setup Guide](./docs/validator_setup.md)
 
 ---
 
 ## License
 
-Distributed under the [MIT License](./LICENSE.md).
+Distributed under the [MIT License](./LICENSE).
 
 ---
 
 ## Contributing
 
 Contributions are welcome!  
-Please review the [CONTRIBUTING.md](./CONTRIBUTING.md) (coming soon) before submitting pull requests.
+Please review the `CONTRIBUTING.md` (coming soon) before submitting pull requests.
 
 ---
 
