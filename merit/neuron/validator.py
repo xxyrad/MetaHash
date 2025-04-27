@@ -1,5 +1,3 @@
-# merit/neuron/validator.py
-
 import bittensor as bt
 import pyotp
 import asyncio
@@ -26,6 +24,12 @@ class Validator:
 
         self.latest_ping_success = {}
         self.ping_task = None
+
+        # Fetch hyperparameters dynamically
+        hyperparams = self.subtensor.get_subnet_hyperparameters(netuid=self.netuid)
+        self.weights_version = int(hyperparams.weights_version)
+
+        self.metagraph = self.subtensor.metagraph(netuid=self.netuid)
 
         self.state = self._load_state()
         self.health = self._load_health()
@@ -64,9 +68,6 @@ class Validator:
             return False
 
     async def ping_miner(self, uid: int, hotkey: str) -> bool:
-        """
-        Sends a PingRequest and validates the TOTP response.
-        """
         axon = self.metagraph.axons[uid]
 
         if not self.is_valid_public_ipv4(axon.ip) or axon.port == 0:
@@ -94,22 +95,19 @@ class Validator:
         return False
 
     async def _background_pinger(self):
-        """
-        Background task: ping all miners periodically.
-        """
         while True:
             try:
                 self.metagraph = self.subtensor.metagraph(netuid=self.netuid)
 
                 for uid in range(len(self.metagraph.hotkeys)):
                     if self.metagraph.validator_permit[uid]:
-                        continue  # Skip validators
+                        continue
 
                     hotkey = self.metagraph.hotkeys[uid]
 
                     axon = self.metagraph.axons[uid]
                     if not self.is_valid_public_ipv4(axon.ip) or axon.port == 0:
-                        continue  # Skip bad IPs
+                        continue
 
                     success = await self.ping_miner(uid, hotkey)
                     self.latest_ping_success[hotkey] = success
@@ -122,9 +120,6 @@ class Validator:
             await asyncio.sleep(self.ping_frequency)
 
     async def run(self):
-        """
-        Validator main loop.
-        """
         bt.logging.info("Validator running...")
 
         if self.ping_frequency:
@@ -133,6 +128,10 @@ class Validator:
         try:
             while True:
                 self.metagraph = self.subtensor.metagraph(netuid=self.netuid)
+
+                # Refresh weights_version dynamically every epoch
+                hyperparams = self.subtensor.get_subnet_hyperparameters(netuid=self.netuid)
+                self.weights_version = int(hyperparams.weights_version)
 
                 uids = []
                 scores = []
@@ -152,12 +151,10 @@ class Validator:
 
                     bmps = incentive
 
-                    # If axon invalid, force BMPS to 0
                     if not self.is_valid_public_ipv4(axon.ip) or axon.port == 0:
                         bt.logging.debug(f"Invalid axon for hotkey {hotkey}, setting BMPS=0.0")
                         bmps = 0.0
                     else:
-                        # Adjust by ping results
                         ping_success = self.latest_ping_success.get(hotkey, False) if self.ping_frequency else await self.ping_miner(uid, hotkey)
 
                         if bmps > 0.0:
@@ -191,12 +188,12 @@ class Validator:
                         netuid=self.netuid,
                         uids=uids,
                         weights=normalized_weights,
+                        version=self.weights_version,
                     )
                     bt.logging.success(f"Epoch {self.subtensor.get_current_block()}: Weights set successfully.")
                 else:
                     bt.logging.warning("No valid miners found to set weights for.")
 
-                # Save epoch results
                 block = self.subtensor.get_current_block()
                 path = os.path.join(merit_config.EPOCH_RESULTS_DIR, f"epoch_{block}.json")
                 with open(path, "w") as f:
@@ -215,9 +212,6 @@ class Validator:
                 await self.ping_task
 
     def _prune_epoch_results(self):
-        """
-        Prune old epoch files, keeping only the last N epochs.
-        """
         files = sorted(
             [f for f in os.listdir(merit_config.EPOCH_RESULTS_DIR) if f.startswith("epoch_") and f.endswith(".json")],
             key=lambda x: os.path.getmtime(os.path.join(merit_config.EPOCH_RESULTS_DIR, x))
