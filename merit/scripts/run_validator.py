@@ -1,11 +1,17 @@
 import bittensor as bt
+import argparse
 import asyncio
 from merit.neuron.validator import Validator
 
 def main():
-    parser = bt.ArgumentParser()
-    parser.add_argument("--netuid", type=int, help="Subnet netuid to validate.")
+    parser = argparse.ArgumentParser()
+    bt.wallet.add_args(parser)
+    bt.subtensor.add_args(parser)
+    bt.logging.add_args(parser)
+
+    parser.add_argument("--netuid", type=int, required=True, help="Subnet netuid to validate.")
     parser.add_argument("--ping_frequency", type=int, default=None, help="Optional ping frequency in seconds.")
+
     config = bt.config(parser=parser)
     bt.logging(config=config)
 

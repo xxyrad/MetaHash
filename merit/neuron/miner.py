@@ -16,6 +16,12 @@ class Miner:
 
         self.netuid = config.netuid
 
+        # Hotkey registration check
+        self.metagraph = self.subtensor.metagraph(netuid=self.netuid)
+        if self.wallet.hotkey.ss58_address not in self.metagraph.hotkeys:
+            bt.logging.error(f"Hotkey {self.wallet.hotkey.ss58_address} is not registered on subnet {self.netuid}. Exiting.")
+            exit(1)
+
         self.axon.attach(self.handle_ping_request)
         self.axon.start()
 
