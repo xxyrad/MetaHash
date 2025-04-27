@@ -9,16 +9,21 @@ from merit.protocol.merit_protocol import PingRequest, PingResponse
 from merit.config import merit_config
 
 class Validator:
-    def __init__(self, ping_frequency=None):
+    def __init__(self, network: str, wallet_name: str, wallet_hotkey: str, netuid: int, ping_frequency=None):
         bt.logging.info("Initializing Validator...")
 
-        self.wallet = bt.wallet()
-        self.subtensor = bt.subtensor(network=merit_config.NETWORK)
+        self.network = network
+        self.wallet_name = wallet_name
+        self.wallet_hotkey = wallet_hotkey
+        self.netuid = netuid
+        self.ping_frequency = ping_frequency
+
+        self.wallet = bt.wallet(name=self.wallet_name, hotkey=self.wallet_hotkey)
+        self.subtensor = bt.subtensor(network=self.network)
         self.dendrite = bt.dendrite(wallet=self.wallet)
 
         os.makedirs(merit_config.EPOCH_RESULTS_DIR, exist_ok=True)
 
-        self.ping_frequency = ping_frequency
         self.latest_ping_success = {}  # Tracks last ping result per miner
         self.ping_task = None
 
@@ -52,11 +57,7 @@ class Validator:
             json.dump(self.health, f, indent=4)
 
     async def ping_miner(self, uid: int, hotkey: str) -> bool:
-        """
-        Sends a PingRequest and validates the TOTP response.
-        """
         axon = self.metagraph.axons[uid]
-
         try:
             request = PingRequest(hotkey=hotkey)
             response = await self.dendrite.forward(
@@ -68,22 +69,19 @@ class Validator:
             if isinstance(response, PingResponse):
                 hashed = hashlib.sha256(hotkey.encode('utf-8')).digest()
                 base32_secret = base64.b32encode(hashed).decode('utf-8').strip('=')
-
                 totp = pyotp.TOTP(base32_secret)
                 if totp.verify(response.token, valid_window=1):
                     return True
+
         except Exception as e:
             bt.logging.warning(f"Ping failed for {hotkey}: {e}")
 
         return False
 
     async def _background_pinger(self):
-        """
-        Background task: ping all miners periodically.
-        """
         while True:
             try:
-                self.metagraph = self.subtensor.metagraph(netuid=merit_config.MERIT_NETUID)
+                self.metagraph = self.subtensor.metagraph(netuid=self.netuid)
 
                 for uid in range(len(self.metagraph.hotkeys)):
                     hotkey = self.metagraph.hotkeys[uid]
@@ -98,9 +96,6 @@ class Validator:
             await asyncio.sleep(self.ping_frequency)
 
     async def run(self):
-        """
-        Validator main loop.
-        """
         bt.logging.info("Validator running...")
 
         if self.ping_frequency:
@@ -108,7 +103,7 @@ class Validator:
 
         try:
             while True:
-                self.metagraph = self.subtensor.metagraph(netuid=merit_config.MERIT_NETUID)
+                self.metagraph = self.subtensor.metagraph(netuid=self.netuid)
 
                 results = []
                 bmps_scores = []
@@ -118,7 +113,6 @@ class Validator:
                     coldkey = self.metagraph.coldkeys[uid]
                     incentive = float(self.metagraph.incentive[uid])
 
-                    # Determine ping success:
                     if self.ping_frequency:
                         ping_success = self.latest_ping_success.get(hotkey, False)
                     else:
@@ -156,7 +150,7 @@ class Validator:
 
                 self.subtensor.set_weights(
                     wallet=self.wallet,
-                    netuid=merit_config.MERIT_NETUID,
+                    netuid=self.netuid,
                     uids=list(range(len(self.metagraph.hotkeys))),
                     weights=normalized_weights,
                 )
@@ -181,9 +175,6 @@ class Validator:
                 await self.ping_task
 
     def _prune_epoch_results(self):
-        """
-        Prune old epoch files, keeping only the last N epochs.
-        """
         files = sorted(
             [f for f in os.listdir(merit_config.EPOCH_RESULTS_DIR) if f.startswith("epoch_") and f.endswith(".json")],
             key=lambda x: os.path.getmtime(os.path.join(merit_config.EPOCH_RESULTS_DIR, x))

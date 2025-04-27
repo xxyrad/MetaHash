@@ -7,22 +7,30 @@ from merit.protocol.merit_protocol import PingRequest, PingResponse
 from merit.config import merit_config
 
 class Miner:
-    def __init__(self):
+    def __init__(self, network: str, wallet_name: str, wallet_hotkey: str, netuid: int):
         bt.logging.info("Initializing Miner...")
 
-        self.wallet = bt.wallet()
-        self.subtensor = bt.subtensor(network=merit_config.NETWORK)
+        # Save parameters
+        self.network = network
+        self.wallet_name = wallet_name
+        self.wallet_hotkey = wallet_hotkey
+        self.netuid = netuid
 
-        # Set up Axon
+        # Initialize wallet and subtensor
+        self.wallet = bt.wallet(name=self.wallet_name, hotkey=self.wallet_hotkey)
+        self.subtensor = bt.subtensor(network=self.network)
+
+        # Set up Axon server
         self.axon = bt.axon(wallet=self.wallet)
-        self.axon.attach(self.handle_ping_request)  # <-- Corrected: no synapse_type param
+        self.axon.attach(self.handle_ping_request)  # attach handler
 
+        # Start Axon server
         self.axon.start()
         bt.logging.success(f"Miner Axon started at {self.axon.external_ip}:{self.axon.external_port}")
 
     async def handle_ping_request(self, synapse: PingRequest) -> PingResponse:
         """
-        Handles incoming PingRequest and returns TOTP token.
+        Handles incoming PingRequest and returns a TOTP token.
         """
         hotkey = self.wallet.hotkey.ss58_address
 
