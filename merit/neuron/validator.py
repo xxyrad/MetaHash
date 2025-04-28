@@ -90,7 +90,8 @@ class Validator:
         axon = neuron.axon_info
 
         if not self.is_valid_public_ipv4(axon.ip) or axon.port == 0:
-            bt.logging.debug(f"Skipping ping for hotkey {neuron.hotkey}: Invalid or non-public IPv4 address {axon.ip}:{axon.port}")
+            bt.logging.debug(
+                f"Skipping ping for hotkey {neuron.hotkey}: Invalid or non-public IPv4 address {axon.ip}:{axon.port}")
             return False
 
         if not await self._is_port_open(axon.ip, axon.port):
@@ -99,17 +100,24 @@ class Validator:
 
         try:
             request = PingRequest(hotkey=neuron.hotkey)
-            response = await self.dendrite.forward(
-                axon,
-                request,
-                timeout=merit_config.PING_TIMEOUT,
-            )
+
+            try:
+                # Extra try/except inside just for dendrite.forward()
+                response = await self.dendrite.forward(
+                    axon,
+                    request,
+                    timeout=merit_config.PING_TIMEOUT,
+                )
+            except Exception as e:
+                bt.logging.warning(f"Error during dendrite forwarding for {neuron.hotkey}: {e}")
+                return False
 
             if not isinstance(response, PingResponse):
                 bt.logging.warning(f"Invalid response type from {neuron.hotkey}")
                 return False
 
-            if not hasattr(response, "token") or not isinstance(response.token, str) or len(response.token.strip()) == 0:
+            if not hasattr(response, "token") or not isinstance(response.token, str) or len(
+                    response.token.strip()) == 0:
                 bt.logging.warning(f"Missing or invalid token from {neuron.hotkey}")
                 return False
 
@@ -127,7 +135,7 @@ class Validator:
             return True
 
         except Exception as e:
-            bt.logging.warning(f"Error pinging {neuron.hotkey}: {e}")
+            bt.logging.warning(f"Unexpected ping error for {neuron.hotkey}: {e}")
             return False
 
     async def _background_pinger(self):
