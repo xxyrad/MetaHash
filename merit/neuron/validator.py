@@ -33,7 +33,7 @@ class Validator:
         self.state = self._load_state()
         self.health = self._load_health()
 
-        # Fetch all metagraphs once and reuse
+        # Fetch all metagraphs info once initially
         self.all_metagraphs_info = self._fetch_all_metagraphs_info()
 
     def _fetch_all_metagraphs_info(self):
@@ -189,6 +189,10 @@ class Validator:
 
         try:
             while True:
+                # ✅ Refresh all global miner info every epoch
+                self.all_metagraphs_info = self._fetch_all_metagraphs_info()
+
+                # ✅ Refresh Merit subnet metagraph
                 self.metagraph = self.subtensor.metagraph(netuid=self.netuid)
 
                 uids = []
