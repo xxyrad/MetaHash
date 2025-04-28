@@ -5,8 +5,8 @@ MERIT_NETUID = 73  # NetUID of the Merit Subnet
 # Ping Settings
 PING_TIMEOUT = 10  # Timeout per ping attempt (seconds)
 PING_RETRIES = 2   # Number of retries if ping fails
-PING_SUCCESS_BONUS = 1.0  # Bonus points for successful ping
-PING_FAILURE_PENALTY = 0.25  # Penalty points for failed ping after retries
+PING_SUCCESS_BONUS = 0.1    # ✅ Rescaled bonus for successful ping
+PING_FAILURE_PENALTY = 0.025  # ✅ Rescaled penalty for failed ping after retries
 
 # Health Scoring
 HEALTH_INITIAL = 1.0  # Starting health score

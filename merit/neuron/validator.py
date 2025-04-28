@@ -33,7 +33,6 @@ class Validator:
         self.state = self._load_state()
         self.health = self._load_health()
 
-        # Fetch all metagraphs info once initially
         self.all_metagraphs_info = self._fetch_all_metagraphs_info()
 
     def _fetch_all_metagraphs_info(self):
@@ -168,6 +167,8 @@ class Validator:
 
     def compute_incentive_for_hotkey(self, hotkey: str) -> float:
         incentives = []
+        active_subnet_count = len([info for info in self.all_metagraphs_info if info.netuid not in (0, self.netuid)])
+
         for info in self.all_metagraphs_info:
             if info.netuid in (0, self.netuid):
                 continue
@@ -176,10 +177,12 @@ class Validator:
                 incentive = info.incentives[idx]
                 incentives.append(incentive)
 
-        if incentives:
-            return sum(incentives) / len(incentives)
-        else:
+        if active_subnet_count == 0:
             return 0.0
+
+        total_incentive = sum(incentives)
+        average_incentive = total_incentive / active_subnet_count
+        return average_incentive
 
     async def run(self):
         bt.logging.info("Validator running...")
@@ -189,10 +192,7 @@ class Validator:
 
         try:
             while True:
-                # ✅ Refresh all global miner info every epoch
                 self.all_metagraphs_info = self._fetch_all_metagraphs_info()
-
-                # ✅ Refresh Merit subnet metagraph
                 self.metagraph = self.subtensor.metagraph(netuid=self.netuid)
 
                 uids = []

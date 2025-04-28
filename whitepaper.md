@@ -1,91 +1,144 @@
-# Merit Subnet - WHITEPAPER
+# Merit Subnet — Whitepaper
 
 ---
 
-## Believe
+## 1. Believe
 
-Merit is a Bittensor subnet (NetUID 73) designed to reward miner participation across the broader Bittensor ecosystem.  
-Validators on Merit assess registered miners' performance in other subnets, measure their active participation, and assign emissions based on their relative contributions.  
-Merit aims to create a fair, secure, and scalable participation-based incentive layer across all Bittensor subnets.
+**Merit** is a Bittensor subnet designed to reward miners for their **active participation across other Bittensor subnets**.
 
----
+Validators in Merit evaluate **registered hotkeys** based on their contribution elsewhere in the Bittensor ecosystem, assigning dynamic rewards based on a calculated **Bittensor Miner Participation Score (BMPS)**.
 
-## Purpose
-
-- Incentivize **cross-subnet participation** by miners.
-- Reward miners who demonstrate **consistent uptime** and **positive incentives** elsewhere.
-- Protect the Merit subnet from **fake, non-compliant**, or **idle miners** through **strict validation** mechanisms.
+Merit encourages real work, broad participation, and sustained online presence.
 
 ---
 
-## Validator Design
+## 2. Registration
 
-Validators on Merit operate under the following architecture:
+Miners must register their **hotkey** directly to the Merit subnet (`netuid 73`).
 
-- **Metagraph Synchronization**:  
-  Regularly fetch the full Metagraph of subnet 73.
-  
-- **Neuron-Based Filtering**:  
-  Validators only consider miners by inspecting each `NeuronInfoLite`:
-  - Skip if `validator_permit == True`
-  - Skip if `dividends > 0`
-  - Skip if `validator_trust > 0`
-  
-- **Incentive Calculation**:
-  - Average the miner’s incentive across all **other subnets**.
-  - **Ignore** Merit’s own NetUID (73) and NetUID 0.
-  - **Scale** incentive ×1000 to give it greater weight.
-  
-- **Uptime Bonus**:
-  - +1.0 point for successful ping per epoch.
-  - -0.25 points for failed ping per epoch (after validation).
-  
-- **Weight Normalization**:
-  - Miner scores are normalized to produce valid Bittensor weights.
-
-- **Epoch Historical Data**:
-  - Retain only the last 48 epochs of scoring data for historical purposes.
+- Registration happens on-chain following Bittensor standards.
+- Only **hotkeys registered to Merit** will be evaluated and scored.
 
 ---
 
-## Security and Miner Validation
+## 3. Incentive Mechanism (Finalized)
 
-Validators employ strict validation procedures:
+Merit's validator scoring process operates as follows:
 
-- **TCP Preflight Check**:
-  - Before pinging, validators perform a lightweight TCP connection check to ensure the miner's IP:PORT is reachable.
-  
-- **Strict Ping Validation**:
-  - Only accept responses matching the `PingResponse` format.
-  - Verify presence and integrity of the TOTP token.
-  - Use the miner’s hotkey as the TOTP seed.
-  - Accept only if TOTP token matches the current or previous valid window.
-  
-- **Hard Failures**:
-  - Any unexpected response type, missing token, invalid token, or unreachable miner leads to a failed ping.
-  - No partial credits are awarded for "partial" responses.
+### Step 1: Global Refresh Each Epoch
+
+- Validators call `subtensor.get_all_metagraphs_info()` once per epoch.
+- Only active subnets are considered.
+- Netuid 0 (root) and Netuid 73 (Merit) are excluded.
 
 ---
 
-## Emissions Design
+### Step 2: 1:1 Hotkey Lookup
 
-| Factor | Weight |
-|--------|--------|
-| Cross-subnet Incentive | 90% of BMPS score |
-| Subnet Uptime (Ping Success) | 10% of BMPS score |
+For each **hotkey registered on Merit**:
 
-✅ The system prioritizes **real-world contribution** to Bittensor first, with **uptime reliability** as a secondary bonus.
+- Validator searches for the **same hotkey** across **all other active subnets**.
+- If found, collects the hotkey's incentive from that subnet.
 
 ---
-## Merit: Core Values
 
-- **Fairness**: Emissions are earned, not given.
-- **For Miners by Miner**: Merit empowers miners supporting the entire Bittensor network.
+### Step 3: Incentive Averaging
+
+- Validators **sum all incentives found** across all other subnets.
+- **Average incentive** is calculated by:
+
+```text
+average_incentive = (sum of found incentives) / (total number of active subnets - 2)
+```
+
+Where:
+
+- Active subnets exclude netuid 0 and 73.
+- Missing entries are treated as zero.
+
+✅ This design **rewards broad multi-subnet participation**.
 
 ---
-## Merit: Roadmap
-- **Fairness**: Emissions are earned, not given.
-- **For Miners by Miner**: Merit empowers miners supporting the entire Bittensor network.
+
+### Step 4: BMPS Score Calculation
+
+The **Bittensor Miner Participation Score (BMPS)** is:
+
+```text
+bmps = average_incentive × 1000
+```
+
+Then adjusted for liveness:
+
+| Event | Effect on BMPS |
+|-------|----------------|
+| Successful ping | `+0.1` |
+| Failed ping (after retries) | `-0.025` |
+
+✅ **Ping** acts as a **small fine-tuning adjustment**,  
+✅ **Incentives** remain the **dominant factor**.
 
 ---
-# End of Document
+
+### Step 5: Normalization and Submission
+
+- All BMPS scores are normalized across registered miners.
+- Weights are submitted via `set_weights()` to the Bittensor chain.
+
+---
+
+## 4. Security and Verification
+
+- **Public IPv4 Address Validation** ensures only reachable miners are scored.
+- **TOTP-Secured Pings** verify real miner presence using hotkey-seeded secrets.
+- **Type-Checked Responses** protect against invalid or garbage returns.
+- **Background Health Checks** record miner uptime over time.
+
+---
+
+## 5. Anti-Gaming Measures
+
+| Threat | Mitigation |
+|--------|------------|
+| Registering a single subnet to maximize reward | ✅ Averaging across all subnets |
+| Faking responses | ✅ TOTP cryptographic verification |
+| Hosting on invalid IPs | ✅ Public IPv4 validation |
+| Ghost miners registering but never serving | ✅ Live ping penalties |
+
+---
+
+## 6. Technical Parameters
+
+| Parameter | Value |
+|-----------|-------|
+| Subnet UID (Merit) | 73 |
+| Epoch Tempo | 360 blocks (~1 hour) |
+| Ping Timeout | 10 seconds |
+| Ping Retries | 2 |
+| Ping Success Bonus | +0.1 |
+| Ping Failure Penalty | -0.025 |
+| Max Validators | 64 |
+| Max Stored Epoch Files | 48 |
+| Default Network | finney |
+
+---
+
+## 7. Future Extensions
+
+- **Merit Dashboard** to track miner performance live.
+- **Subnet Popularity and Complexity Index** for scaling BMPS.
+- **Dynamic Liveness Models** based on uptime history.
+
+---
+
+# 📋 Summary
+
+Merit creates a decentralized, incentive-driven system where miners are rewarded fairly based on their **broad, real-world contribution** to the Bittensor ecosystem.
+
+✅ Validators refresh incentives dynamically.  
+✅ Miners are evaluated per hotkey, per subnet.  
+✅ Uptime and participation both matter — but contribution comes first.
+
+Merit rewards **real work**, not empty registrations.
+
+---
