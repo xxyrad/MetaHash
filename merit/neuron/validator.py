@@ -33,6 +33,18 @@ class Validator:
         self.state = self._load_state()
         self.health = self._load_health()
 
+        # Fetch all metagraphs once and reuse
+        self.all_metagraphs_info = self._fetch_all_metagraphs_info()
+
+    def _fetch_all_metagraphs_info(self):
+        try:
+            infos = self.subtensor.get_all_metagraphs_info()
+            bt.logging.success(f"Fetched {len(infos)} metagraphs info.")
+            return infos
+        except Exception as e:
+            bt.logging.warning(f"Failed to fetch all metagraphs info: {e}")
+            return []
+
     def _load_state(self):
         if os.path.isfile(merit_config.STATE_FILE):
             with open(merit_config.STATE_FILE, "r") as f:
@@ -82,7 +94,6 @@ class Validator:
             bt.logging.debug(f"Skipping ping for hotkey {neuron.hotkey}: Invalid or non-public IPv4 address {axon.ip}:{axon.port}")
             return False
 
-        # ✅ Preflight check
         if not await self._is_port_open(axon.ip, axon.port):
             bt.logging.warning(f"Cannot reach {axon.ip}:{axon.port} for hotkey {neuron.hotkey}")
             return False
@@ -95,7 +106,6 @@ class Validator:
                 timeout=merit_config.PING_TIMEOUT,
             )
 
-            # ✅ Strict response validation
             if not isinstance(response, PingResponse):
                 bt.logging.warning(f"Invalid response type from {neuron.hotkey}")
                 return False
@@ -156,6 +166,21 @@ class Validator:
             pass
         return False
 
+    def compute_incentive_for_hotkey(self, hotkey: str) -> float:
+        incentives = []
+        for info in self.all_metagraphs_info:
+            if info.netuid in (0, self.netuid):
+                continue
+            if hotkey in info.hotkeys:
+                idx = info.hotkeys.index(hotkey)
+                incentive = info.incentives[idx]
+                incentives.append(incentive)
+
+        if incentives:
+            return sum(incentives) / len(incentives)
+        else:
+            return 0.0
+
     async def run(self):
         bt.logging.info("Validator running...")
 
@@ -177,11 +202,11 @@ class Validator:
 
                     hotkey = neuron.hotkey
                     coldkey = neuron.coldkey
-                    incentive = float(neuron.incentive)
+
+                    incentive = self.compute_incentive_for_hotkey(hotkey)
+                    bmps = incentive * 1000.0
 
                     axon = neuron.axon_info
-
-                    bmps = incentive * 1000.0
 
                     if not self.is_valid_public_ipv4(axon.ip) or axon.port == 0:
                         bt.logging.debug(f"Invalid axon for hotkey {hotkey}, setting BMPS=0.0")
