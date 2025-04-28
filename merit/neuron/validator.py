@@ -163,8 +163,6 @@ class Validator:
 
     def _should_skip_neuron(self, neuron) -> bool:
         try:
-            if neuron.validator_permit:
-                return True
             if neuron.dividends > 0:
                 return True
             if neuron.validator_trust > 0:
