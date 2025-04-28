@@ -6,6 +6,7 @@ import json
 import hashlib
 import base64
 import ipaddress
+import gc
 from merit.protocol.merit_protocol import PingRequest, PingResponse
 from merit.config import merit_config
 
@@ -26,11 +27,12 @@ class Validator:
         self.ping_task = None
 
         self.metagraph = self.subtensor.metagraph(netuid=self.netuid)
-
         self.state = self._load_state()
         self.health = self._load_health()
-
         self.all_metagraphs_info = self._fetch_all_metagraphs_info()
+
+        # Track last block weights were set
+        self.last_weight_set_block = self.subtensor.get_current_block()
 
     def _fetch_all_metagraphs_info(self):
         try:
@@ -89,43 +91,35 @@ class Validator:
         port = axon.port
 
         if not self.is_valid_public_ipv4(ip) or port == 0:
-            bt.logging.debug(f"Skipping ping for hotkey {neuron.hotkey}: Invalid or non-public IPv4 address {ip}:{port}")
+            bt.logging.debug(f"Skipping ping for {neuron.hotkey}: invalid IP {ip}:{port}")
             return False
 
         if not await self._is_port_open(ip, port):
-            bt.logging.warning(f"Cannot reach {ip}:{port} for hotkey {neuron.hotkey}")
+            bt.logging.warning(f"Cannot reach {ip}:{port} for {neuron.hotkey}")
             return False
 
         try:
             request = PingRequest(hotkey=neuron.hotkey)
-
-            try:
-                response = await self.dendrite.forward(
-                    axon,
-                    request,
-                    timeout=merit_config.PING_TIMEOUT,
-                )
-            except Exception as e:
-                bt.logging.warning(f"Error during dendrite forwarding for {neuron.hotkey}: {e}")
-                return False
+            response = await self.dendrite.forward(
+                axon,
+                request,
+                timeout=merit_config.PING_TIMEOUT,
+            )
 
             if not isinstance(response, PingResponse):
                 bt.logging.warning(f"Invalid response type from {neuron.hotkey}")
                 return False
 
-            if not hasattr(response, "token") or not isinstance(response.token, str) or len(response.token.strip()) == 0:
+            if not hasattr(response, "token") or not isinstance(response.token, str) or not response.token.strip():
                 bt.logging.warning(f"Missing or invalid token from {neuron.hotkey}")
                 return False
 
-            try:
-                hashed = hashlib.sha256(neuron.hotkey.encode('utf-8')).digest()
-                base32_secret = base64.b32encode(hashed).decode('utf-8').strip('=')
-                totp = pyotp.TOTP(base32_secret)
-                if not totp.verify(response.token, valid_window=1):
-                    bt.logging.warning(f"TOTP verification failed for {neuron.hotkey}")
-                    return False
-            except Exception as e:
-                bt.logging.warning(f"Error during TOTP validation for {neuron.hotkey}: {e}")
+            hashed = hashlib.sha256(neuron.hotkey.encode('utf-8')).digest()
+            base32_secret = base64.b32encode(hashed).decode('utf-8').strip('=')
+            totp = pyotp.TOTP(base32_secret)
+
+            if not totp.verify(response.token, valid_window=1):
+                bt.logging.warning(f"TOTP verification failed for {neuron.hotkey}")
                 return False
 
             return True
@@ -143,11 +137,7 @@ class Validator:
                     if self._should_skip_neuron(neuron):
                         continue
 
-                    axon = neuron.axon_info
-                    ip = axon.ip
-                    port = axon.port
-
-                    if not self.is_valid_public_ipv4(ip) or port == 0:
+                    if not self.is_valid_public_ipv4(neuron.axon_info.ip) or neuron.axon_info.port == 0:
                         continue
 
                     success = await self.ping_miner(neuron)
@@ -162,9 +152,7 @@ class Validator:
 
     def _should_skip_neuron(self, neuron) -> bool:
         try:
-            if neuron.dividends > 0:
-                return True
-            if neuron.validator_trust > 0:
+            if neuron.dividends > 0 or neuron.validator_trust > 0:
                 return True
         except Exception:
             pass
@@ -173,21 +161,17 @@ class Validator:
     def compute_incentive_for_hotkey(self, hotkey: str) -> float:
         incentives = []
         active_subnet_count = len([info for info in self.all_metagraphs_info if info.netuid not in (0, self.netuid)])
-
         for info in self.all_metagraphs_info:
             if info.netuid in (0, self.netuid):
                 continue
             if hotkey in info.hotkeys:
                 idx = info.hotkeys.index(hotkey)
-                incentive = info.incentives[idx]
-                incentives.append(incentive)
+                incentives.append(info.incentives[idx])
 
         if active_subnet_count == 0:
             return 0.0
 
-        total_incentive = sum(incentives)
-        average_incentive = total_incentive / active_subnet_count
-        return average_incentive
+        return sum(incentives) / active_subnet_count
 
     async def run(self):
         bt.logging.info("Validator running...")
@@ -197,99 +181,90 @@ class Validator:
 
         try:
             while True:
-                self.all_metagraphs_info = self._fetch_all_metagraphs_info()
-                self.metagraph.sync(subtensor=self.subtensor)
-
                 current_block = self.subtensor.get_current_block()
+                blocks_since_last_set = current_block - self.last_weight_set_block
 
-                my_uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
-                blocks_since_update = self.subtensor.blocks_since_last_update(netuid=self.netuid, uid=my_uid)
+                if blocks_since_last_set < (merit_config.TEMPO - 2):
+                    bt.logging.info(f"Waiting for next epoch... {blocks_since_last_set}/{merit_config.TEMPO} blocks passed.")
+                    await asyncio.sleep(12)  # Wait for 12 seconds
+                    continue
 
-                if blocks_since_update >= (merit_config.TEMPO - 2):
-                    bt.logging.info(f"Enough blocks passed ({blocks_since_update}). Setting weights...")
+                # Refresh metagraph
+                self.metagraph.sync(subtensor=self.subtensor)
+                self.all_metagraphs_info = self._fetch_all_metagraphs_info()
 
-                    uids = []
-                    scores = []
-                    results = []
+                uids, scores, results = [], [], []
 
-                    for neuron in self.metagraph.neurons:
-                        if self._should_skip_neuron(neuron):
-                            bt.logging.debug(f"Skipping hotkey {neuron.hotkey}")
-                            continue
+                for neuron in self.metagraph.neurons:
+                    if self._should_skip_neuron(neuron):
+                        bt.logging.debug(f"Skipping hotkey {neuron.hotkey}")
+                        continue
 
-                        hotkey = neuron.hotkey
-                        coldkey = neuron.coldkey
+                    hotkey = neuron.hotkey
+                    coldkey = neuron.coldkey
+                    axon = neuron.axon_info
 
-                        incentive = self.compute_incentive_for_hotkey(hotkey)
-                        bmps = incentive * 1000.0
+                    incentive = self.compute_incentive_for_hotkey(hotkey)
+                    bmps = incentive * 1000.0
 
-                        axon = neuron.axon_info
-                        ip = axon.ip
-                        port = axon.port
-
-                        if not self.is_valid_public_ipv4(ip) or port == 0:
-                            bt.logging.debug(f"Invalid axon for {hotkey}, setting BMPS=0.0")
-                            bmps = 0.0
-                        else:
-                            ping_success = self.latest_ping_success.get(hotkey, False) if self.ping_frequency else await self.ping_miner(neuron)
-                            if bmps > 0.0:
-                                if ping_success:
-                                    bmps += merit_config.PING_SUCCESS_BONUS
-                                else:
-                                    bmps -= merit_config.PING_FAILURE_PENALTY
-                            else:
-                                bt.logging.debug(f"Hotkey {hotkey} has BMPS <= 0, skipping ping reward adjustment.")
-
-                        uids.append(neuron.uid)
-                        scores.append(max(bmps, 0.0))
-
-                        results.append({
-                            "hotkey": hotkey,
-                            "coldkey": coldkey,
-                            "average_incentive": incentive,
-                            "bmps_score": bmps,
-                            "valid_ip": self.is_valid_public_ipv4(ip) and port != 0,
-                        })
-
-                        self.state[hotkey] = bmps
-                        self._save_state()
-
-                    total_bmps = sum(scores)
-                    normalized_weights = [score / total_bmps if total_bmps > 0 else 0 for score in scores]
-
-                    if len(normalized_weights) > 0:
-                        block_number = self.subtensor.get_current_block()
-
-                        bt.logging.info(f"--- Weight assignment for Epoch {block_number} ---")
-                        for uid, weight in zip(uids, normalized_weights):
-                            neuron = next((n for n in self.metagraph.neurons if n.uid == uid), None)
-                            if neuron:
-                                bt.logging.info(f"Hotkey: {neuron.hotkey} | UID: {uid} | Weight: {weight:.6f}")
-                        bt.logging.info(f"--- End of Weight Assignment ---")
-
-                        self.subtensor.set_weights(
-                            wallet=self.wallet,
-                            netuid=self.netuid,
-                            uids=uids,
-                            weights=normalized_weights,
-                            version_key=self.metagraph.hparams.weights_version,
-                        )
-                        bt.logging.success(f"Epoch {block_number}: Weights set successfully.")
+                    if not self.is_valid_public_ipv4(axon.ip) or axon.port == 0:
+                        bt.logging.debug(f"Invalid axon for {hotkey}, setting BMPS=0.0")
+                        bmps = 0.0
                     else:
-                        bt.logging.warning("No valid miners found to set weights for.")
+                        ping_success = self.latest_ping_success.get(hotkey, False)
+                        if bmps > 0.0:
+                            bmps += merit_config.PING_SUCCESS_BONUS if ping_success else -merit_config.PING_FAILURE_PENALTY
 
-                    block = self.subtensor.get_current_block()
-                    path = os.path.join(merit_config.EPOCH_RESULTS_DIR, f"epoch_{block}.json")
-                    with open(path, "w") as f:
-                        json.dump(results, f, indent=4)
+                    uids.append(neuron.uid)
+                    scores.append(max(bmps, 0.0))
 
-                    self._clear_state()
-                    self._prune_epoch_results()
+                    results.append({
+                        "hotkey": hotkey,
+                        "coldkey": coldkey,
+                        "average_incentive": incentive,
+                        "bmps_score": bmps,
+                        "valid_ip": self.is_valid_public_ipv4(axon.ip) and axon.port != 0,
+                    })
 
+                    self.state[hotkey] = bmps
+                    self._save_state()
+
+                total_bmps = sum(scores)
+                normalized_weights = [score / total_bmps if total_bmps > 0 else 0 for score in scores]
+
+                if normalized_weights:
+                    bt.logging.info(f"--- Weight assignment for Epoch {current_block} ---")
+                    for uid, weight in zip(uids, normalized_weights):
+                        neuron = next((n for n in self.metagraph.neurons if n.uid == uid), None)
+                        if neuron:
+                            bt.logging.info(f"Hotkey: {neuron.hotkey} | UID: {uid} | Weight: {weight:.6f}")
+                    bt.logging.info("--- End of Weight Assignment ---")
+
+                    version_key = self.metagraph.hparams.weights_version
+
+                    self.subtensor.set_weights(
+                        wallet=self.wallet,
+                        netuid=self.netuid,
+                        uids=uids,
+                        weights=normalized_weights,
+                        wait_for_inclusion=True,
+                        version_key=version_key
+                    )
+                    bt.logging.success(f"Epoch {current_block}: Weights set successfully.")
+                    self.last_weight_set_block = self.subtensor.get_current_block()
                 else:
-                    blocks_to_wait = merit_config.TEMPO - blocks_since_update
-                    bt.logging.info(f"Not enough blocks passed ({blocks_since_update}). Waiting {blocks_to_wait} blocks...")
-                    await asyncio.sleep(12 * blocks_to_wait)
+                    bt.logging.warning("No valid miners found to set weights for.")
+
+                block = self.subtensor.get_current_block()
+                path = os.path.join(merit_config.EPOCH_RESULTS_DIR, f"epoch_{block}.json")
+                with open(path, "w") as f:
+                    json.dump(results, f, indent=4)
+
+                self._clear_state()
+                self._prune_epoch_results()
+
+                gc.collect()
+                await asyncio.sleep(12)
 
         except asyncio.CancelledError:
             bt.logging.warning("Validator shutdown requested.")
@@ -303,9 +278,7 @@ class Validator:
             [f for f in os.listdir(merit_config.EPOCH_RESULTS_DIR) if f.startswith("epoch_") and f.endswith(".json")],
             key=lambda x: os.path.getmtime(os.path.join(merit_config.EPOCH_RESULTS_DIR, x))
         )
-
         if len(files) > merit_config.MAX_EPOCH_FILES:
-            to_delete = files[:-merit_config.MAX_EPOCH_FILES]
-            for f in to_delete:
+            for f in files[:-merit_config.MAX_EPOCH_FILES]:
                 os.remove(os.path.join(merit_config.EPOCH_RESULTS_DIR, f))
                 bt.logging.debug(f"Deleted old epoch file: {f}")
