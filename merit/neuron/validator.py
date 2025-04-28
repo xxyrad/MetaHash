@@ -29,7 +29,6 @@ class Validator:
         self.weights_version = int(hyperparams.weights_version)
 
         self.metagraph = self.subtensor.metagraph(netuid=self.netuid)
-
         self.state = self._load_state()
         self.health = self._load_health()
 
@@ -92,7 +91,7 @@ class Validator:
         port = axon.port
 
         if not self.is_valid_public_ipv4(ip) or port == 0:
-            bt.logging.debug(f"Skipping ping for hotkey {neuron.hotkey}: Invalid or non-public IPv4 address {ip}:{port}")
+            bt.logging.debug(f"Skipping ping for hotkey {neuron.hotkey}: Invalid or non-public IPv4 {ip}:{port}")
             return False
 
         if not await self._is_port_open(ip, port):
@@ -101,16 +100,7 @@ class Validator:
 
         try:
             request = PingRequest(hotkey=neuron.hotkey)
-
-            try:
-                response = await self.dendrite.forward(
-                    axon,
-                    request,
-                    timeout=merit_config.PING_TIMEOUT,
-                )
-            except Exception as e:
-                bt.logging.warning(f"Error during dendrite forwarding for {neuron.hotkey}: {e}")
-                return False
+            response = await self.dendrite.forward(axon, request, timeout=merit_config.PING_TIMEOUT)
 
             if not isinstance(response, PingResponse):
                 bt.logging.warning(f"Invalid response type from {neuron.hotkey}")
@@ -120,15 +110,11 @@ class Validator:
                 bt.logging.warning(f"Missing or invalid token from {neuron.hotkey}")
                 return False
 
-            try:
-                hashed = hashlib.sha256(neuron.hotkey.encode('utf-8')).digest()
-                base32_secret = base64.b32encode(hashed).decode('utf-8').strip('=')
-                totp = pyotp.TOTP(base32_secret)
-                if not totp.verify(response.token, valid_window=1):
-                    bt.logging.warning(f"TOTP verification failed for {neuron.hotkey}")
-                    return False
-            except Exception as e:
-                bt.logging.warning(f"Error during TOTP validation for {neuron.hotkey}: {e}")
+            hashed = hashlib.sha256(neuron.hotkey.encode('utf-8')).digest()
+            base32_secret = base64.b32encode(hashed).decode('utf-8').strip('=')
+            totp = pyotp.TOTP(base32_secret)
+            if not totp.verify(response.token, valid_window=1):
+                bt.logging.warning(f"TOTP verification failed for {neuron.hotkey}")
                 return False
 
             return True
@@ -140,7 +126,7 @@ class Validator:
     async def _background_pinger(self):
         while True:
             try:
-                self.metagraph = self.subtensor.metagraph(netuid=self.netuid)
+                self.metagraph.sync(subtensor=self.subtensor)
 
                 for neuron in self.metagraph.neurons:
                     if self._should_skip_neuron(neuron):
@@ -182,8 +168,7 @@ class Validator:
                 continue
             if hotkey in info.hotkeys:
                 idx = info.hotkeys.index(hotkey)
-                incentive = info.incentives[idx]
-                incentives.append(incentive)
+                incentives.append(info.incentives[idx])
 
         if active_subnet_count == 0:
             return 0.0
@@ -201,7 +186,7 @@ class Validator:
         try:
             while True:
                 self.all_metagraphs_info = self._fetch_all_metagraphs_info()
-                self.metagraph = self.subtensor.metagraph(netuid=self.netuid)
+                self.metagraph.sync(subtensor=self.subtensor)
 
                 uids = []
                 scores = []
@@ -223,16 +208,13 @@ class Validator:
                     port = axon.port
 
                     if not self.is_valid_public_ipv4(ip) or port == 0:
-                        bt.logging.debug(f"Invalid axon for hotkey {hotkey}, setting BMPS=0.0")
+                        bt.logging.debug(f"Invalid axon for {hotkey}, setting BMPS=0.0")
                         bmps = 0.0
                     else:
                         ping_success = self.latest_ping_success.get(hotkey, False) if self.ping_frequency else await self.ping_miner(neuron)
 
                         if bmps > 0.0:
-                            if ping_success:
-                                bmps += merit_config.PING_SUCCESS_BONUS
-                            else:
-                                bmps -= merit_config.PING_FAILURE_PENALTY
+                            bmps += merit_config.PING_SUCCESS_BONUS if ping_success else -merit_config.PING_FAILURE_PENALTY
                         else:
                             bt.logging.debug(f"Hotkey {hotkey} has BMPS <= 0. Skipping ping reward adjustment.")
 
