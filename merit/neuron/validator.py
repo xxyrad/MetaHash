@@ -88,21 +88,21 @@ class Validator:
 
     async def ping_miner(self, neuron) -> bool:
         axon = neuron.axon_info
+        ip = axon.ip
+        port = axon.port
 
-        if not self.is_valid_public_ipv4(axon.ip) or axon.port == 0:
-            bt.logging.debug(
-                f"Skipping ping for hotkey {neuron.hotkey}: Invalid or non-public IPv4 address {axon.ip}:{axon.port}")
+        if not self.is_valid_public_ipv4(ip) or port == 0:
+            bt.logging.debug(f"Skipping ping for hotkey {neuron.hotkey}: Invalid or non-public IPv4 address {ip}:{port}")
             return False
 
-        if not await self._is_port_open(axon.ip, axon.port):
-            bt.logging.warning(f"Cannot reach {axon.ip}:{axon.port} for hotkey {neuron.hotkey}")
+        if not await self._is_port_open(ip, port):
+            bt.logging.warning(f"Cannot reach {ip}:{port} for hotkey {neuron.hotkey}")
             return False
 
         try:
             request = PingRequest(hotkey=neuron.hotkey)
 
             try:
-                # Extra try/except inside just for dendrite.forward()
                 response = await self.dendrite.forward(
                     axon,
                     request,
@@ -116,8 +116,7 @@ class Validator:
                 bt.logging.warning(f"Invalid response type from {neuron.hotkey}")
                 return False
 
-            if not hasattr(response, "token") or not isinstance(response.token, str) or len(
-                    response.token.strip()) == 0:
+            if not hasattr(response, "token") or not isinstance(response.token, str) or len(response.token.strip()) == 0:
                 bt.logging.warning(f"Missing or invalid token from {neuron.hotkey}")
                 return False
 
@@ -148,7 +147,10 @@ class Validator:
                         continue
 
                     axon = neuron.axon_info
-                    if not self.is_valid_public_ipv4(axon.ip) or axon.port == 0:
+                    ip = axon.ip
+                    port = axon.port
+
+                    if not self.is_valid_public_ipv4(ip) or port == 0:
                         continue
 
                     success = await self.ping_miner(neuron)
@@ -217,8 +219,10 @@ class Validator:
                     bmps = incentive * 1000.0
 
                     axon = neuron.axon_info
+                    ip = axon.ip
+                    port = axon.port
 
-                    if not self.is_valid_public_ipv4(axon.ip) or axon.port == 0:
+                    if not self.is_valid_public_ipv4(ip) or port == 0:
                         bt.logging.debug(f"Invalid axon for hotkey {hotkey}, setting BMPS=0.0")
                         bmps = 0.0
                     else:
@@ -240,7 +244,7 @@ class Validator:
                         "coldkey": coldkey,
                         "average_incentive": incentive,
                         "bmps_score": bmps,
-                        "valid_ip": self.is_valid_public_ipv4(axon.ip) and axon.port != 0,
+                        "valid_ip": self.is_valid_public_ipv4(ip) and port != 0,
                     })
 
                     self.state[hotkey] = bmps
@@ -250,13 +254,22 @@ class Validator:
                 normalized_weights = [score / total_bmps if total_bmps > 0 else 0 for score in scores]
 
                 if len(normalized_weights) > 0:
+                    block_number = self.subtensor.get_current_block()
+
+                    bt.logging.info(f"--- Weight assignment for Epoch {block_number} ---")
+                    for uid, weight in zip(uids, normalized_weights):
+                        neuron = next((n for n in self.metagraph.neurons if n.uid == uid), None)
+                        if neuron:
+                            bt.logging.info(f"Hotkey: {neuron.hotkey} | UID: {uid} | Weight: {weight:.6f}")
+                    bt.logging.info(f"--- End of Weight Assignment ---")
+
                     self.subtensor.set_weights(
                         wallet=self.wallet,
                         netuid=self.netuid,
                         uids=uids,
                         weights=normalized_weights,
                     )
-                    bt.logging.success(f"Epoch {self.subtensor.get_current_block()}: Weights set successfully.")
+                    bt.logging.success(f"Epoch {block_number}: Weights set successfully.")
                 else:
                     bt.logging.warning("No valid miners found to set weights for.")
 
