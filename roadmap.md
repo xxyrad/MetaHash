@@ -56,20 +56,8 @@ The goal is to continuously improve miner visibility, cross-subnet performance a
 
 ### ⚡ Other Features (TBD)
 
-- **Delegated Reputation**:
-  - Coldkeys delegating miners to participate on specific subnets.
-
 - **Multi-subnet Bonus Weighting**:
   - Enhanced emissions for miners active in multiple high-complexity subnets.
-
-- **Merit Credit System**:
-  - Internal scoring system independent of Bittensor incentive.
-
-- **Validator Reputation Layer**:
-  - Track and score validators for fairness and uptime on Merit.
-
-- **Web3 Authentication**:
-  - Integrate Web3 wallet logins for dashboard access and management.
 
 ---
 
