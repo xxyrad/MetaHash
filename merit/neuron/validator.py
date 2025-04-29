@@ -88,6 +88,8 @@ class Validator:
         ip = axon.ip
         port = axon.port
 
+        bt.logging.debug(f"Pinging miner {neuron.hotkey} at {ip}:{port}...")
+
         if not self.is_valid_public_ipv4(ip) or port == 0:
             bt.logging.debug(f"Skipping ping for hotkey {neuron.hotkey}: Invalid IP {ip}:{port}")
             return False
@@ -128,6 +130,7 @@ class Validator:
                 bt.logging.warning(f"Error during TOTP validation for {neuron.hotkey}: {e}")
                 return False
 
+            bt.logging.debug(f"Ping success for {neuron.hotkey}")
             return True
 
         except Exception as e:
@@ -138,6 +141,7 @@ class Validator:
         while True:
             try:
                 self.metagraph.sync(subtensor=self.subtensor)
+                bt.logging.debug("Background pinger started checking miners...")
 
                 for neuron in self.metagraph.neurons:
                     if self._should_skip_neuron(neuron):
@@ -212,9 +216,11 @@ class Validator:
                     scores = []
                     results = []
 
+                    bt.logging.debug(f"Evaluating miners on netuid {self.netuid}...")
+
                     for neuron in self.metagraph.neurons:
                         if self._should_skip_neuron(neuron):
-                            bt.logging.debug(f"Skipping {neuron.hotkey}")
+                            bt.logging.debug(f"Skipping {neuron.hotkey} (dividends/trust active)")
                             continue
 
                         hotkey = neuron.hotkey
@@ -239,6 +245,7 @@ class Validator:
                         else:
                             if bmps > 0.0:
                                 bmps += merit_config.PING_SUCCESS_BONUS
+                                bt.logging.debug(f"Ping bonus applied for {hotkey}")
 
                         uids.append(neuron.uid)
                         scores.append(max(bmps, 0.0))
