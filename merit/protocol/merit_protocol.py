@@ -12,5 +12,5 @@ class PingResponse(bt.Synapse):
     """
     Synapse for a miner to respond with a TOTP token.
     """
+    hotkey: str
     token: str
-
