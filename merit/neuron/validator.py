@@ -149,7 +149,8 @@ class Validator:
         try:
             if neuron.dividends > 0 or neuron.validator_trust > 0:
                 bt.logging.debug(
-                    f"Evaluating neuron {neuron.hotkey}: dividends={neuron.dividends}, validator_trust={neuron.validator_trust}")
+                    f"Evaluating neuron {neuron.hotkey}: dividends={neuron.dividends}, "
+                    f"validator_trust={neuron.validator_trust}")
                 return True
         except Exception:
             pass
@@ -211,7 +212,8 @@ class Validator:
 
                         # Always log dividend/trust evaluation
                         bt.logging.debug(
-                            f"Evaluating neuron {hotkey}: dividends={neuron.dividends}, trust={neuron.validator_trust}")
+                            f"Evaluating neuron {hotkey}: dividends={neuron.dividends}, "
+                            f"validator_trust={neuron.validator_trust}")
 
                         if self._should_skip_neuron(neuron):
                             bt.logging.debug(f"Skipping neuron {hotkey} due to dividends/trust")
@@ -311,4 +313,3 @@ class Validator:
             for f in to_delete:
                 os.remove(os.path.join(merit_config.EPOCH_RESULTS_DIR, f))
                 bt.logging.debug(f"Deleted old epoch file: {f}")
-
