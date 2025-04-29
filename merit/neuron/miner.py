@@ -38,7 +38,7 @@ class Miner:
 
     async def handle_ping_request(self, synapse: PingRequest) -> PingResponse:
         """
-        Handles incoming PingRequest and returns TOTP token.
+        Handles incoming PingRequest and returns TOTP token and hotkey.
         """
         hotkey = self.wallet.hotkey.ss58_address
 
@@ -48,8 +48,8 @@ class Miner:
         totp = pyotp.TOTP(base32_secret)
         token = totp.now()
 
-        bt.logging.debug(f"Responding with TOTP token {token}")
-        return PingResponse(token=token)
+        bt.logging.debug(f"Responding with hotkey={hotkey} and token={token}")
+        return PingResponse(hotkey=hotkey, token=token)
 
     def run(self):
         """
