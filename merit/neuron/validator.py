@@ -17,8 +17,8 @@ class Validator:
         self.subtensor = bt.subtensor(config=config)
         self.dendrite = bt.dendrite(wallet=self.wallet)
         self.netuid = config.netuid
-        self.ping_frequency = getattr(config, "ping_frequency", 600)
-        self.no_zero_weights = getattr(config, "no_zero_weights", False)
+        self.ping_frequency = config.ping_frequency or 600  # every 10 minutes
+        self.no_zero_weights = config.no_zero_weights or False # default False
         os.makedirs(merit_config.EPOCH_RESULTS_DIR, exist_ok=True)
         self.latest_ping_success = {}
         self.ping_task = None
@@ -222,8 +222,15 @@ class Validator:
                     total_bmps = sum(scores)
                     normalized_weights = [score / total_bmps if total_bmps > 0 else 0 for score in scores]
 
-                    if total_bmps > 0 and len(normalized_weights) > 0:
-                        bt.logging.info(f"Setting weights: total_bmps = {total_bmps}")
+                    if total_bmps > 0:
+                        normalized_weights = [score / total_bmps for score in scores]
+                    elif self.no_zero_weights:
+                        normalized_weights = [1.0 / len(scores) for _ in scores]
+                    else:
+                        normalized_weights = []
+
+                    if normalized_weights:
+                        bt.logging.info(f"Setting weights. {len(normalized_weights)} miners.")
                         self.subtensor.set_weights(
                             wallet=self.wallet,
                             netuid=self.netuid,
@@ -234,7 +241,7 @@ class Validator:
                         )
                         bt.logging.success(f"Epoch {current_block}: Weights set successfully.")
                     else:
-                        bt.logging.warning("All scores are zero, skipping setting weights.")
+                        bt.logging.warning("No valid miners found to set weights for.")
 
                     block = self.subtensor.get_current_block()
                     path = os.path.join(merit_config.EPOCH_RESULTS_DIR, f"epoch_{block}.json")
