@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import base64
 
-from merit.protocol.merit_protocol import PingRequest, PingResponse
+from merit.protocol.merit_protocol import PingSynapse
 from merit.config import merit_config
 
 class Miner:
@@ -36,20 +36,17 @@ class Miner:
         )
         bt.logging.success(f"Miner served on netuid {self.netuid}.")
 
-    async def handle_ping_request(self, synapse: PingRequest) -> PingResponse:
-        """
-        Handles incoming PingRequest and returns TOTP token and hotkey.
-        """
+    async def handle_ping_request(self, synapse: PingSynapse) -> PingSynapse:
         hotkey = self.wallet.hotkey.ss58_address
-
         # Generate TOTP token based on hotkey
         hashed = hashlib.sha256(hotkey.encode('utf-8')).digest()
         base32_secret = base64.b32encode(hashed).decode('utf-8').strip('=')
         totp = pyotp.TOTP(base32_secret)
         token = totp.now()
 
-        bt.logging.debug(f"Responding with hotkey={hotkey} and token={token}")
-        return PingResponse(hotkey=hotkey, token=token)
+        bt.logging.debug(f"[Miner] Sending PingResponse: hotkey={hotkey}, token={token}")
+        synapse.token = token
+        return synapse
 
     def run(self):
         """

@@ -6,7 +6,7 @@ import json
 import hashlib
 import base64
 import ipaddress
-from merit.protocol.merit_protocol import PingRequest, PingResponse
+from merit.protocol.merit_protocol import PingSynapse
 from merit.config import merit_config
 
 class Validator:
@@ -91,17 +91,14 @@ class Validator:
             return False
 
         try:
-            request = PingRequest(hotkey=neuron.hotkey)
-            response = await asyncio.wait_for(
-                self.dendrite.forward(axon, request, timeout=merit_config.PING_TIMEOUT),
-                timeout=5.0,
-            )
+            request = PingSynapse(hotkey=neuron.hotkey)
+            response = await self.dendrite.forward(axon, request, timeout=merit_config.PING_TIMEOUT)
 
-            if not isinstance(response, PingResponse):
-                bt.logging.debug(f"Invalid ping response type for {neuron.hotkey}")
+            if not isinstance(response, PingSynapse):
+                bt.logging.error(f"Invalid response type: {type(response)}")
                 return False
 
-            if not hasattr(response, "token") or not isinstance(response.token, str) or len(response.token.strip()) == 0:
+            if not response.token:
                 bt.logging.debug(f"Missing token from {neuron.hotkey}")
                 return False
 

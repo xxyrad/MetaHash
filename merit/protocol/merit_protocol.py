@@ -1,16 +1,9 @@
-# merit/protocol/merit_protocol.py
-
 import bittensor as bt
+from typing import Optional
 
-class PingRequest(bt.Synapse):
+class PingSynapse(bt.Synapse):
     """
-    Synapse for a validator to send a ping to a miner.
+    Unified Synapse for Ping operations between Validator and Miner.
     """
-    hotkey: str
-
-class PingResponse(bt.Synapse):
-    """
-    Synapse for a miner to respond with a TOTP token.
-    """
-    hotkey: str
-    token: str
+    hotkey: str  # Validator sets this
+    token: Optional[str] = None  # Miner sets this
