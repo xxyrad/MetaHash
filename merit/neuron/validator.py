@@ -220,7 +220,6 @@ class Validator:
                     self._save_state()
 
                     total_bmps = sum(scores)
-                    normalized_weights = [score / total_bmps if total_bmps > 0 else 0 for score in scores]
 
                     if total_bmps > 0:
                         normalized_weights = [score / total_bmps for score in scores]
