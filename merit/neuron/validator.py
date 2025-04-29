@@ -123,6 +123,8 @@ class Validator:
     async def _background_pinger(self):
         while True:
             try:
+                self.metagraph.sync(subtensor=self.subtensor)
+                self.all_metagraphs_info = self._fetch_all_metagraphs_info()
                 bt.logging.debug("Starting background ping round...")
 
                 tasks = []
