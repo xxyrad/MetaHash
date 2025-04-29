@@ -123,7 +123,6 @@ class Validator:
     async def _background_pinger(self):
         while True:
             try:
-                self.metagraph.sync(subtensor=self.subtensor)
                 bt.logging.debug("Starting background ping round...")
 
                 tasks = []
@@ -175,23 +174,29 @@ class Validator:
     async def run(self):
         bt.logging.info("Validator running...")
 
-        if self.ping_frequency:
+        # Start background pinger if not already started
+        if self.ping_task is None:
             self.ping_task = asyncio.create_task(self._background_pinger())
 
         try:
             while True:
-                self.all_metagraphs_info = self._fetch_all_metagraphs_info()
-                self.metagraph.sync(subtensor=self.subtensor)
-
                 current_block = self.subtensor.get_current_block()
                 my_uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
                 blocks_since_update = self.subtensor.blocks_since_last_update(netuid=self.netuid, uid=my_uid)
 
+                # Wait for first ping round to complete
                 if not self.first_ping_done:
                     bt.logging.warning("Waiting for pinger to complete first round...")
                     await asyncio.sleep(3)
                     continue
 
+                # Sync metagraph and fetch latest incentives only when close to setting weights
+                if blocks_since_update >= (merit_config.TEMPO - 5):
+                    bt.logging.debug(f"Preparing to set weights, syncing metagraph...")
+                    self.metagraph.sync(subtensor=self.subtensor)
+                    self.all_metagraphs_info = self._fetch_all_metagraphs_info()
+
+                # If enough blocks passed, attempt to set weights
                 if blocks_since_update >= (merit_config.TEMPO - 2):
                     bt.logging.info(f"Enough blocks passed ({blocks_since_update}). Setting weights...")
 
@@ -208,7 +213,11 @@ class Validator:
                         incentive = self.compute_incentive_for_hotkey(hotkey)
                         bmps = incentive * 1000.0
 
-                        valid_axon = self.is_valid_public_ipv4(neuron.axon_info.ip) and neuron.axon_info.port != 0 and self.latest_ping_success.get(hotkey, False)
+                        valid_axon = (
+                                self.is_valid_public_ipv4(neuron.axon_info.ip) and
+                                neuron.axon_info.port != 0 and
+                                self.latest_ping_success.get(hotkey, False)
+                        )
 
                         if not valid_axon:
                             bmps = 0.0
@@ -221,15 +230,17 @@ class Validator:
 
                     total_bmps = sum(scores)
 
-                    if total_bmps > 0:
-                        normalized_weights = [score / total_bmps for score in scores]
-                    elif self.no_zero_weights:
-                        normalized_weights = [1.0 / len(scores) for _ in scores]
-                    else:
-                        normalized_weights = []
+                    # Normalization
+                    normalized_weights = [score / total_bmps if total_bmps > 0 else 0 for score in scores]
 
-                    if normalized_weights:
-                        bt.logging.info(f"Setting weights. {len(normalized_weights)} miners.")
+                    # Handle zero weights if --no_zero_weights was passed
+                    if total_bmps == 0 and self.no_zero_weights:
+                        bt.logging.warning("All scores are zero, but --no_zero_weights is set. Assigning even weights.")
+                        normalized_weights = [1.0 / len(scores) for _ in scores]
+
+                    if len(normalized_weights) > 0 and sum(normalized_weights) > 0:
+                        bt.logging.info(f"Setting weights: total_bmps = {total_bmps:.4f}")
+
                         self.subtensor.set_weights(
                             wallet=self.wallet,
                             netuid=self.netuid,
@@ -240,17 +251,20 @@ class Validator:
                         )
                         bt.logging.success(f"Epoch {current_block}: Weights set successfully.")
                     else:
-                        bt.logging.warning("No valid miners found to set weights for.")
+                        bt.logging.warning("All scores are zero, skipping setting weights.")
 
+                    # Save results for audit
                     block = self.subtensor.get_current_block()
                     path = os.path.join(merit_config.EPOCH_RESULTS_DIR, f"epoch_{block}.json")
                     with open(path, "w") as f:
                         json.dump(self.state, f, indent=4)
 
+                    # Clean old state and old epochs
                     self._clear_state()
                     self._prune_epoch_results()
 
                 else:
+                    # Sleep until next check
                     await asyncio.sleep(12)
 
         except asyncio.CancelledError:
