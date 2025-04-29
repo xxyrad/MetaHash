@@ -61,6 +61,13 @@ class Validator:
         with open(merit_config.HEALTH_FILE, "w") as f:
             json.dump(self.health, f, indent=4)
 
+    def _prune_epoch_results(self, keep_last=5):
+        files = sorted([
+            f for f in os.listdir(merit_config.EPOCH_RESULTS_DIR) if f.startswith("epoch_")
+        ])
+        for old_file in files[:-keep_last]:
+            os.remove(os.path.join(merit_config.EPOCH_RESULTS_DIR, old_file))
+
     def is_valid_public_ipv4(self, ip: str) -> bool:
         try:
             parsed_ip = ipaddress.IPv4Address(ip)
@@ -169,11 +176,10 @@ class Validator:
             if not incentives:
                 continue
 
-            average_incentive = sum(incentives) / len(incentives)
-            bmps = average_incentive * 1000
+            avg_incentive = sum(incentives) / len(incentives)
+            bmps = avg_incentive * 1000
 
-            bt.logging.debug(f"Miner {hotkey}: Incentives={incentives}, Avg={average_incentive:.6f}, BMPs={bmps:.2f}")
-
+            bt.logging.debug(f"Miner {hotkey}: Incentives={incentives}, Avg={avg_incentive:.6f}, BMPs={bmps:.2f}")
             self.state[hotkey] = bmps
             evaluated_count += 1
 
@@ -192,7 +198,8 @@ class Validator:
                 my_uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
                 blocks_since_update = self.subtensor.blocks_since_last_update(netuid=self.netuid, uid=my_uid)
 
-                bt.logging.debug(f"Current block: {current_block}, blocks since last update: {blocks_since_update}")
+                bt.logging.debug(
+                    f"My UID: {my_uid}, blocks since last weights set: {blocks_since_update}, TEMPO: {merit_config.TEMPO}")
 
                 if not self.first_ping_done:
                     bt.logging.debug("Waiting for first ping round to complete...")
@@ -204,17 +211,23 @@ class Validator:
                 if blocks_since_update >= (merit_config.TEMPO - 2):
                     bt.logging.info("Enough blocks passed. Setting weights now...")
 
-                    uids = []
-                    weights = []
+                    uids, scores = [], []
                     for neuron in self.metagraph.neurons:
                         if neuron.hotkey in self.state:
                             uids.append(neuron.uid)
-                            weights.append(self.state[neuron.hotkey])
+                            scores.append(self.state[neuron.hotkey])
 
-                    total_weight = sum(weights)
-                    if total_weight > 0:
-                        normalized_weights = [w / total_weight for w in weights]
+                    total_bmps = sum(scores)
+                    if total_bmps == 0 and self.no_zero_weights and len(scores) > 0:
+                        bt.logging.warning("All scores are zero, but --no_zero_weights is set. Assigning even weights.")
+                        normalized_weights = [1.0 / len(scores)] * len(scores)
+                    elif total_bmps > 0:
+                        normalized_weights = [s / total_bmps for s in scores]
+                    else:
+                        normalized_weights = []
 
+                    if normalized_weights:
+                        bt.logging.info(f"Setting weights: total_bmps = {total_bmps:.4f}")
                         self.subtensor.set_weights(
                             wallet=self.wallet,
                             netuid=self.netuid,
@@ -224,9 +237,17 @@ class Validator:
                             wait_for_inclusion=True,
                         )
                         bt.logging.success(f"Weights set successfully at block {current_block}.")
-                        self._clear_state()
                     else:
-                        bt.logging.warning("No nonzero weights to set.")
+                        bt.logging.warning("All scores are zero, skipping setting weights.")
+
+                    # Save to disk
+                    block = self.subtensor.get_current_block()
+                    path = os.path.join(merit_config.EPOCH_RESULTS_DIR, f"epoch_{block}.json")
+                    with open(path, "w") as f:
+                        json.dump(self.state, f, indent=4)
+
+                    self._clear_state()
+                    self._prune_epoch_results()
 
                 else:
                     bt.logging.debug(f"Not enough blocks passed yet ({blocks_since_update}). Waiting...")
