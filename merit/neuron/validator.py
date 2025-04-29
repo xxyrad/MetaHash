@@ -17,8 +17,8 @@ class Validator:
         self.subtensor = bt.subtensor(config=config)
         self.dendrite = bt.dendrite(wallet=self.wallet)
         self.netuid = config.netuid
-        self.ping_frequency = config.ping_frequency or 600  # every 10 minutes
-        self.no_zero_weights = config.no_zero_weights or False # default False
+        self.ping_frequency = config.ping_frequency or 600
+        self.no_zero_weights = config.no_zero_weights or False
         os.makedirs(merit_config.EPOCH_RESULTS_DIR, exist_ok=True)
         self.latest_ping_success = {}
         self.ping_task = None
@@ -41,8 +41,7 @@ class Validator:
         if os.path.isfile(merit_config.STATE_FILE):
             with open(merit_config.STATE_FILE, "r") as f:
                 return json.load(f)
-        else:
-            return {}
+        return {}
 
     def _save_state(self):
         with open(merit_config.STATE_FILE, "w") as f:
@@ -56,8 +55,7 @@ class Validator:
         if os.path.isfile(merit_config.HEALTH_FILE):
             with open(merit_config.HEALTH_FILE, "r") as f:
                 return json.load(f)
-        else:
-            return {}
+        return {}
 
     def _save_health(self):
         with open(merit_config.HEALTH_FILE, "w") as f:
@@ -94,12 +92,8 @@ class Validator:
             request = PingSynapse(hotkey=neuron.hotkey)
             response = await self.dendrite.forward(axon, request, timeout=merit_config.PING_TIMEOUT)
 
-            if not isinstance(response, PingSynapse):
-                bt.logging.error(f"Invalid response type: {type(response)}")
-                return False
-
-            if not response.token:
-                bt.logging.debug(f"Missing token from {neuron.hotkey}")
+            if not isinstance(response, PingSynapse) or not response.token:
+                bt.logging.debug(f"Invalid response or missing token from {neuron.hotkey}")
                 return False
 
             hashed = hashlib.sha256(neuron.hotkey.encode('utf-8')).digest()
@@ -137,7 +131,8 @@ class Validator:
                         continue
                     self.latest_ping_success[neuron.hotkey] = bool(success)
 
-                bt.logging.success(f"Ping round complete. {sum(self.latest_ping_success.values())} miners reachable.")
+                reachable_count = sum(self.latest_ping_success.values())
+                bt.logging.success(f"Ping round complete. {reachable_count} miners reachable.")
                 self.first_ping_done = True
 
             except Exception as e:
@@ -147,37 +142,47 @@ class Validator:
 
     def _should_skip_neuron(self, neuron) -> bool:
         try:
-            if neuron.dividends > 0 or neuron.validator_trust > 0:
-                bt.logging.debug(
-                    f"Evaluating neuron {neuron.hotkey}: dividends={neuron.dividends}, "
-                    f"validator_trust={neuron.validator_trust}")
-                return True
+            return neuron.dividends > 0 or neuron.validator_trust > 0
         except Exception:
-            pass
-        return False
+            return False
 
-    def compute_incentive_for_hotkey(self, hotkey: str) -> float:
-        incentives = []
-        active_subnet_count = len([info for info in self.all_metagraphs_info if info.netuid not in (0, self.netuid)])
+    def _evaluate_miners(self):
+        bt.logging.debug("Evaluating miners...")
+        self.state = {}
+        evaluated_count = 0
 
-        for info in self.all_metagraphs_info:
-            if info.netuid in (0, self.netuid):
+        for neuron in self.metagraph.neurons:
+            if self._should_skip_neuron(neuron):
                 continue
-            if hotkey in info.hotkeys:
-                idx = info.hotkeys.index(hotkey)
-                incentives.append(info.incentives[idx])
+            if not self.latest_ping_success.get(neuron.hotkey, False):
+                continue
 
-        if active_subnet_count == 0:
-            return 0.0
+            hotkey = neuron.hotkey
+            incentives = []
+            for info in self.all_metagraphs_info:
+                if info.netuid in (0, self.netuid):
+                    continue
+                if hotkey in info.hotkeys:
+                    idx = info.hotkeys.index(hotkey)
+                    incentives.append(info.incentives[idx])
 
-        total_incentive = sum(incentives)
-        bt.logging.debug(f"Incentives for {hotkey}: {incentives}")
-        return total_incentive / active_subnet_count
+            if not incentives:
+                continue
+
+            average_incentive = sum(incentives) / len(incentives)
+            bmps = average_incentive * 1000
+
+            bt.logging.debug(f"Miner {hotkey}: Incentives={incentives}, Avg={average_incentive:.6f}, BMPs={bmps:.2f}")
+
+            self.state[hotkey] = bmps
+            evaluated_count += 1
+
+        self._save_state()
+        bt.logging.info(f"Evaluated {evaluated_count} miners.")
 
     async def run(self):
         bt.logging.info("Validator running...")
 
-        # Start background pinger if not already started
         if self.ping_task is None:
             self.ping_task = asyncio.create_task(self._background_pinger())
 
@@ -187,87 +192,28 @@ class Validator:
                 my_uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
                 blocks_since_update = self.subtensor.blocks_since_last_update(netuid=self.netuid, uid=my_uid)
 
-                # Wait for first ping round to complete
+                bt.logging.debug(f"Current block: {current_block}, blocks since last update: {blocks_since_update}")
+
                 if not self.first_ping_done:
-                    bt.logging.warning("Waiting for pinger to complete first round...")
+                    bt.logging.debug("Waiting for first ping round to complete...")
                     await asyncio.sleep(3)
                     continue
 
-                # Sync metagraph and fetch latest incentives only when close to setting weights
-                if blocks_since_update >= (merit_config.TEMPO - 5):
-                    bt.logging.debug(f"Preparing to set weights, syncing metagraph...")
-                    self.metagraph.sync(subtensor=self.subtensor)
-                    self.all_metagraphs_info = self._fetch_all_metagraphs_info()
+                self._evaluate_miners()
 
-                # If enough blocks passed, attempt to set weights
                 if blocks_since_update >= (merit_config.TEMPO - 2):
-                    bt.logging.info(f"Enough blocks passed ({blocks_since_update}). Setting weights...")
+                    bt.logging.info("Enough blocks passed. Setting weights now...")
 
                     uids = []
-                    scores = []
-
+                    weights = []
                     for neuron in self.metagraph.neurons:
-                        hotkey = neuron.hotkey
-                        coldkey = neuron.coldkey
+                        if neuron.hotkey in self.state:
+                            uids.append(neuron.uid)
+                            weights.append(self.state[neuron.hotkey])
 
-                        # Always log dividend/trust evaluation
-                        bt.logging.debug(
-                            f"Evaluating neuron {hotkey}: dividends={neuron.dividends}, "
-                            f"validator_trust={neuron.validator_trust}")
-
-                        if self._should_skip_neuron(neuron):
-                            bt.logging.debug(f"Skipping neuron {hotkey} due to dividends/trust")
-                            continue
-
-                        # Check valid axon (critical!)
-                        valid_axon = (
-                                self.is_valid_public_ipv4(neuron.axon_info.ip)
-                                and neuron.axon_info.port != 0
-                                and self.latest_ping_success.get(hotkey, False)
-                        )
-
-                        if not valid_axon:
-                            bt.logging.debug(f"Skipping neuron {hotkey} due to invalid axon or failed ping.")
-                            continue
-
-                        # Incentive computation
-                        incentives = []
-                        for info in self.all_metagraphs_info:
-                            if info.netuid in (0, self.netuid):
-                                continue
-                            if hotkey in info.hotkeys:
-                                idx = info.hotkeys.index(hotkey)
-                                incentives.append(info.incentives[idx])
-
-                        if len(incentives) == 0:
-                            bt.logging.debug(f"No external incentives found for {hotkey}")
-
-                        total_incentive = sum(incentives)
-                        incentive = total_incentive / len(incentives) if incentives else 0.0
-                        bmps = incentive * 1000.0
-
-                        bt.logging.debug(
-                            f"Adding neuron {hotkey} to scoring: incentive={incentive:.6f}, bmps={bmps:.3f}"
-                        )
-
-                        uids.append(neuron.uid)
-                        scores.append(max(bmps, 0.0))
-                        self.state[hotkey] = bmps
-
-                    self._save_state()
-
-                    total_bmps = sum(scores)
-
-                    # Normalization
-                    normalized_weights = [score / total_bmps if total_bmps > 0 else 0 for score in scores]
-
-                    # Handle zero weights if --no_zero_weights was passed
-                    if total_bmps == 0 and self.no_zero_weights:
-                        bt.logging.warning("All scores are zero, but --no_zero_weights is set. Assigning even weights.")
-                        normalized_weights = [1.0 / len(scores) for _ in scores]
-
-                    if len(normalized_weights) > 0 and sum(normalized_weights) > 0:
-                        bt.logging.info(f"Setting weights: total_bmps = {total_bmps:.4f}")
+                    total_weight = sum(weights)
+                    if total_weight > 0:
+                        normalized_weights = [w / total_weight for w in weights]
 
                         self.subtensor.set_weights(
                             wallet=self.wallet,
@@ -277,23 +223,15 @@ class Validator:
                             version_key=self.metagraph.hparams.weights_version,
                             wait_for_inclusion=True,
                         )
-                        bt.logging.success(f"Epoch {current_block}: Weights set successfully.")
+                        bt.logging.success(f"Weights set successfully at block {current_block}.")
+                        self._clear_state()
                     else:
-                        bt.logging.warning("All scores are zero, skipping setting weights.")
-
-                    # Save results for audit
-                    block = self.subtensor.get_current_block()
-                    path = os.path.join(merit_config.EPOCH_RESULTS_DIR, f"epoch_{block}.json")
-                    with open(path, "w") as f:
-                        json.dump(self.state, f, indent=4)
-
-                    # Clean old state and old epochs
-                    self._clear_state()
-                    self._prune_epoch_results()
+                        bt.logging.warning("No nonzero weights to set.")
 
                 else:
-                    # Sleep until next check
-                    await asyncio.sleep(12)
+                    bt.logging.debug(f"Not enough blocks passed yet ({blocks_since_update}). Waiting...")
+
+                await asyncio.sleep(12)
 
         except asyncio.CancelledError:
             bt.logging.warning("Validator shutdown requested.")
@@ -301,15 +239,3 @@ class Validator:
             if self.ping_task:
                 self.ping_task.cancel()
                 await self.ping_task
-
-    def _prune_epoch_results(self):
-        files = sorted(
-            [f for f in os.listdir(merit_config.EPOCH_RESULTS_DIR) if f.startswith("epoch_") and f.endswith(".json")],
-            key=lambda x: os.path.getmtime(os.path.join(merit_config.EPOCH_RESULTS_DIR, x))
-        )
-
-        if len(files) > merit_config.MAX_EPOCH_FILES:
-            to_delete = files[:-merit_config.MAX_EPOCH_FILES]
-            for f in to_delete:
-                os.remove(os.path.join(merit_config.EPOCH_RESULTS_DIR, f))
-                bt.logging.debug(f"Deleted old epoch file: {f}")
