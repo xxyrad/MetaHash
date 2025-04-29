@@ -6,6 +6,7 @@ import json
 import hashlib
 import base64
 import ipaddress
+import time
 from merit.protocol.merit_protocol import PingSynapse
 from merit.config import merit_config
 
@@ -18,6 +19,8 @@ class Validator:
         self.dendrite = bt.dendrite(wallet=self.wallet)
         self.netuid = config.netuid
         self.ping_frequency = config.ping_frequency or 600
+        self.eval_frequency = config.eval_frequency or 600
+        self.last_eval_time = 0
         self.no_zero_weights = config.no_zero_weights or False
         os.makedirs(merit_config.EPOCH_RESULTS_DIR, exist_ok=True)
         self.latest_ping_success = {}
@@ -206,7 +209,10 @@ class Validator:
                     await asyncio.sleep(3)
                     continue
 
-                self._evaluate_miners()
+                now = time.time()
+                if now - self.last_eval_time >= self.eval_frequency:
+                    self._evaluate_miners()
+                    self.last_eval_time = now
 
                 if blocks_since_update >= (merit_config.TEMPO - 2):
                     bt.logging.info("Enough blocks passed. Setting weights now...")
@@ -247,8 +253,8 @@ class Validator:
                         json.dump(self.state, f, indent=4)
 
                     self._clear_state()
+                    self.state = {}  # Clear in-memory state
                     self._prune_epoch_results()
-
                 else:
                     bt.logging.debug(f"Not enough blocks passed yet ({blocks_since_update}). Waiting...")
 
