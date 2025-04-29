@@ -149,7 +149,7 @@ class Validator:
         try:
             if neuron.dividends > 0 or neuron.validator_trust > 0:
                 bt.logging.debug(
-                    f"Evaluating neuron {neuron.hotkey}: dividends={neuron.dividends}, trust={neuron.validator_trust}")
+                    f"Evaluating neuron {neuron.hotkey}: dividends={neuron.dividends}, validator_trust={neuron.validator_trust}")
                 return True
         except Exception:
             pass
@@ -209,12 +209,26 @@ class Validator:
                         hotkey = neuron.hotkey
                         coldkey = neuron.coldkey
 
-                        # Log whether this neuron is being skipped
+                        # Always log dividend/trust evaluation
+                        bt.logging.debug(
+                            f"Evaluating neuron {hotkey}: dividends={neuron.dividends}, trust={neuron.validator_trust}")
+
                         if self._should_skip_neuron(neuron):
-                            bt.logging.debug(f"Skipping neuron {hotkey} due to dividend/trust exclusion.")
+                            bt.logging.debug(f"Skipping neuron {hotkey} due to dividends/trust")
                             continue
 
-                        # Fetch incentive
+                        # Check valid axon (critical!)
+                        valid_axon = (
+                                self.is_valid_public_ipv4(neuron.axon_info.ip)
+                                and neuron.axon_info.port != 0
+                                and self.latest_ping_success.get(hotkey, False)
+                        )
+
+                        if not valid_axon:
+                            bt.logging.debug(f"Skipping neuron {hotkey} due to invalid axon or failed ping.")
+                            continue
+
+                        # Incentive computation
                         incentives = []
                         for info in self.all_metagraphs_info:
                             if info.netuid in (0, self.netuid):
@@ -230,23 +244,9 @@ class Validator:
                         incentive = total_incentive / len(incentives) if incentives else 0.0
                         bmps = incentive * 1000.0
 
-                        # Check axon validity
-                        valid_axon = (
-                                self.is_valid_public_ipv4(neuron.axon_info.ip)
-                                and neuron.axon_info.port != 0
-                                and self.latest_ping_success.get(hotkey, False)
-                        )
-
                         bt.logging.debug(
-                            f"{hotkey} | IP: {neuron.axon_info.ip}, Port: {neuron.axon_info.port}, "
-                            f"Valid IP: {self.is_valid_public_ipv4(neuron.axon_info.ip)}, "
-                            f"Ping: {self.latest_ping_success.get(hotkey, False)}, "
-                            f"Axon Valid: {valid_axon}, Incentive: {incentive:.4f}, BMPs: {bmps:.2f}"
+                            f"Adding neuron {hotkey} to scoring: incentive={incentive:.6f}, bmps={bmps:.3f}"
                         )
-
-                        if not valid_axon:
-                            bt.logging.warning(f"{hotkey} excluded due to invalid axon (ip/port/ping).")
-                            bmps = 0.0
 
                         uids.append(neuron.uid)
                         scores.append(max(bmps, 0.0))
