@@ -72,7 +72,7 @@ class Validator:
 
     async def _is_port_open(self, ip: str, port: int) -> bool:
         try:
-            await asyncio.wait_for(asyncio.open_connection(ip, port), timeout=2.0)
+            await asyncio.wait_for(asyncio.open_connection(ip, port), timeout=4.0)
             return True
         except Exception:
             return False
