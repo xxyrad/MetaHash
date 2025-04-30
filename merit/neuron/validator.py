@@ -175,11 +175,17 @@ class Validator:
                 continue
 
             hotkey = neuron.hotkey
+            axon = neuron.axon_info
 
-            # Strict exclusion for unreachable or invalid miners
+            # Optional: Explicit axon IP check (defensive & clearer logging)
+            if not self.is_valid_public_ipv4(axon.ip) or axon.port == 0:
+                bt.logging.debug(f"Skipping {hotkey}: Invalid axon IP or port ({axon.ip}:{axon.port})")
+                self.state[hotkey] = 0.0
+                continue
+
+            # Strict exclusion for unreachable miners
             if hotkey not in self.valid_miners:
-                bt.logging.debug(
-                    f"Miner {hotkey} was not pinged successfully or was skipped due to invalid axon. Assigning BMPs=0.0")
+                bt.logging.debug(f"Miner {hotkey} was not pinged successfully or skipped. Assigning BMPs=0.0")
                 self.state[hotkey] = 0.0
                 continue
 
@@ -199,7 +205,9 @@ class Validator:
             evaluated_count += 1
 
         self._save_state()
-        bt.logging.info(f"Evaluated {evaluated_count} miners (others set to 0.0).")
+        total_neurons = len([n for n in self.metagraph.neurons if not self._should_skip_neuron(n)])
+        skipped = total_neurons - evaluated_count
+        bt.logging.info(f"Evaluated {evaluated_count} miners (others set to 0.0 = {skipped}).")
 
     async def run(self):
         bt.logging.info("Validator running...")
