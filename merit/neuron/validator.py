@@ -251,7 +251,20 @@ class Validator:
                         bt.logging.warning("All scores are zero, but --no_zero_weights is set. Assigning even weights.")
                         normalized_weights = [1.0 / len(scores)] * len(scores)
                     elif total_bmps > 0:
-                        normalized_weights = [s / total_bmps for s in scores]
+                        ### Developed by @Taogon
+                        # Rank miners by their scores
+                        ranked_miners = sorted(zip(uids, scores), key=lambda x: x[1], reverse=True)
+
+                        # Calculate incentive rewards based on rank
+                        incentive_rewards = []
+                        for rank, (uid, score) in enumerate(ranked_miners, start=1):
+                            incentive_reward = (-1.038e-7 * (rank ** 3)) + (6.214e-5 * (rank ** 2)) - (0.0129 * rank) - 0.0118 + 1
+                            incentive_rewards.append((uid, incentive_reward))
+
+                        # Apply incentive rewards to normalized weights
+                        total_incentive_reward = sum(reward for _, reward in incentive_rewards)
+                        normalized_weights = [reward / total_incentive_reward for _, reward in incentive_rewards]
+                        ### End of @Taogon
                     else:
                         normalized_weights = []
 
