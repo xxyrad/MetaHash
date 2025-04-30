@@ -259,7 +259,19 @@ class Validator:
                         normalized_weights = []
 
                     if normalized_weights:
-                        bt.logging.info(f"Setting weights: total_bmps = {total_bmps:.4f}")
+                        if normalized_weights:
+                            bt.logging.info(f"Setting weights: total_bmps = {total_bmps:.4f}")
+
+                            # Diagnostic: Show per-miner weights before sending
+                            bt.logging.debug("Final normalized weights (uid: weight, hotkey):")
+                            for uid, score in zip(uids, normalized_weights):
+                                hotkey = self.metagraph.hotkeys[uid]
+                                bt.logging.debug(f"  UID {uid:4d} | Weight = {score:.6f} | Hotkey = {hotkey}")
+
+                            # Sanity check: Sum of weights should be ~1.0
+                            weight_sum = sum(normalized_weights)
+                            if not (0.999 <= weight_sum <= 1.001):
+                                bt.logging.warning(f"⚠️ Normalized weights sum to {weight_sum:.6f}, not ≈1.0")
                         self.subtensor.set_weights(
                             wallet=self.wallet,
                             netuid=self.netuid,
