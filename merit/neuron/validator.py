@@ -162,12 +162,19 @@ class Validator:
         evaluated_count = 0
 
         for neuron in self.metagraph.neurons:
+            hotkey = neuron.hotkey
+
+            # Always include miners with validator_trust > 0 or dividends > 0 as 0.0 score
             if self._should_skip_neuron(neuron):
-                continue
-            if not self.latest_ping_success.get(neuron.hotkey, False):
+                self.state[hotkey] = 0.0
                 continue
 
-            hotkey = neuron.hotkey
+            # If ping failed, assign 0.0
+            if not self.latest_ping_success.get(hotkey, False):
+                self.state[hotkey] = 0.0
+                continue
+
+            # Valid pinged miner: calculate incentives
             incentives = []
             for info in self.all_metagraphs_info:
                 if info.netuid in (0, self.netuid):
@@ -177,17 +184,17 @@ class Validator:
                     incentives.append(info.incentives[idx])
 
             if not incentives:
+                self.state[hotkey] = 0.0
                 continue
 
             avg_incentive = sum(incentives) / len(incentives)
             bmps = avg_incentive * 1000
-
-            bt.logging.debug(f"Miner {hotkey}: Incentives={incentives}, Avg={avg_incentive:.6f}, BMPs={bmps:.2f}")
             self.state[hotkey] = bmps
+            bt.logging.debug(f"Miner {hotkey}: Incentives={incentives}, Avg={avg_incentive:.6f}, BMPs={bmps:.2f}")
             evaluated_count += 1
 
         self._save_state()
-        bt.logging.info(f"Evaluated {evaluated_count} miners.")
+        bt.logging.info(f"Evaluated {evaluated_count} miners (others set to 0.0).")
 
     async def run(self):
         bt.logging.info("Validator running...")
@@ -219,9 +226,11 @@ class Validator:
 
                     uids, scores = [], []
                     for neuron in self.metagraph.neurons:
-                        if neuron.hotkey in self.state:
-                            uids.append(neuron.uid)
-                            scores.append(self.state[neuron.hotkey])
+                        if self._should_skip_neuron(neuron):
+                            continue  # Validators shouldn't be pinged or scored at all
+                        uids.append(neuron.uid)
+                        score = self.state.get(neuron.hotkey, 0.0)
+                        scores.append(score)
 
                     total_bmps = sum(scores)
                     if total_bmps == 0 and self.no_zero_weights and len(scores) > 0:
