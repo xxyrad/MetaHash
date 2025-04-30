@@ -177,10 +177,10 @@ class Validator:
             hotkey = neuron.hotkey
 
             # Strict exclusion for unreachable or invalid miners
-            if hotkey not in self.valid_miners or not self.latest_ping_success.get(hotkey, False):
-                bt.logging.debug(f"Miner {hotkey} is unreachable or has invalid axon. Assigning BMPs=0.0")
+            if hotkey not in self.valid_miners:
+                bt.logging.debug(
+                    f"Miner {hotkey} was not pinged successfully or was skipped due to invalid axon. Assigning BMPs=0.0")
                 self.state[hotkey] = 0.0
-                evaluated_count += 1
                 continue
 
             # Proceed only for validated miners
