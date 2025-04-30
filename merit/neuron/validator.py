@@ -24,6 +24,7 @@ class Validator:
         self.no_zero_weights = config.no_zero_weights or False
         os.makedirs(merit_config.EPOCH_RESULTS_DIR, exist_ok=True)
         self.latest_ping_success = {}
+        self.valid_miners = set()
         self.ping_task = None
         self.first_ping_done = False
         self.metagraph = self.subtensor.metagraph(netuid=self.netuid)
@@ -136,10 +137,13 @@ class Validator:
 
                 results = await asyncio.gather(*tasks, return_exceptions=True)
 
+                self.valid_miners.clear()
                 for neuron, success in zip(self.metagraph.neurons, results):
                     if self._should_skip_neuron(neuron):
                         continue
                     self.latest_ping_success[neuron.hotkey] = bool(success)
+                    if success:
+                        self.valid_miners.add(neuron.hotkey)
 
                 reachable_count = sum(self.latest_ping_success.values())
                 bt.logging.success(f"Ping round complete. {reachable_count} miners reachable.")
@@ -162,19 +166,19 @@ class Validator:
         evaluated_count = 0
 
         for neuron in self.metagraph.neurons:
+            if self._should_skip_neuron(neuron):
+                continue
+
             hotkey = neuron.hotkey
 
-            # Always include miners with validator_trust > 0 or dividends > 0 as 0.0 score
-            if self._should_skip_neuron(neuron):
+            # Strict exclusion for unreachable or invalid miners
+            if hotkey not in self.valid_miners or not self.latest_ping_success.get(hotkey, False):
+                bt.logging.debug(f"Miner {hotkey} is unreachable or has invalid axon. Assigning BMPs=0.0")
                 self.state[hotkey] = 0.0
+                evaluated_count += 1
                 continue
 
-            # If ping failed, assign 0.0
-            if not self.latest_ping_success.get(hotkey, False):
-                self.state[hotkey] = 0.0
-                continue
-
-            # Valid pinged miner: calculate incentives
+            # Proceed only for validated miners
             incentives = []
             for info in self.all_metagraphs_info:
                 if info.netuid in (0, self.netuid):
@@ -183,11 +187,7 @@ class Validator:
                     idx = info.hotkeys.index(hotkey)
                     incentives.append(info.incentives[idx])
 
-            if not incentives:
-                self.state[hotkey] = 0.0
-                continue
-
-            avg_incentive = sum(incentives) / len(incentives)
+            avg_incentive = sum(incentives) / len(incentives) if incentives else 0.0
             bmps = avg_incentive * 1000
             self.state[hotkey] = bmps
             bt.logging.debug(f"Miner {hotkey}: Incentives={incentives}, Avg={avg_incentive:.6f}, BMPs={bmps:.2f}")
