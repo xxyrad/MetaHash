@@ -138,7 +138,6 @@ class Validator:
                 self.all_metagraphs_info = self._fetch_all_metagraphs_info()
                 bt.logging.debug("Starting background ping round...")
 
-                # Fix: Track only non-skipped neurons for correct zipping
                 ping_targets = [
                     neuron for neuron in self.metagraph.neurons
                     if not self._should_skip_neuron(neuron)
@@ -171,7 +170,6 @@ class Validator:
         self.state = {}
         evaluated_count = 0
 
-        # Pre-filter metagraphs to only valid foreign subnets
         expected_subnets = [
             info for info in self.all_metagraphs_info
             if info.netuid not in (0, self.netuid)
@@ -195,7 +193,6 @@ class Validator:
                 self.state[hotkey] = 0.0
                 continue
 
-            # Collect incentive values across expected subnets (use 0.0 where absent)
             incentives = []
             for info in expected_subnets:
                 hotkey_to_incentive = dict(zip(info.hotkeys, info.incentives))
@@ -247,7 +244,7 @@ class Validator:
                     uids, scores = [], []
                     for neuron in self.metagraph.neurons:
                         if self._should_skip_neuron(neuron):
-                            continue  # Validators shouldn't be pinged or scored at all
+                            continue
                         uids.append(neuron.uid)
                         score = self.state.get(neuron.hotkey, 0.0)
                         scores.append(score)
@@ -275,14 +272,13 @@ class Validator:
                     else:
                         bt.logging.warning("All scores are zero, skipping setting weights.")
 
-                    # Save to disk
                     block = self.subtensor.get_current_block()
                     path = os.path.join(merit_config.EPOCH_RESULTS_DIR, f"epoch_{block}.json")
                     with open(path, "w") as f:
                         json.dump(self.state, f, indent=4)
 
                     self._clear_state()
-                    self.state = {}  # Clear in-memory state
+                    self.state = {}
                     self._prune_epoch_results()
                 else:
                     bt.logging.debug(f"Not enough blocks passed yet ({blocks_since_update}). Waiting...")
