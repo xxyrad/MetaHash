@@ -259,19 +259,17 @@ class Validator:
                         normalized_weights = []
 
                     if normalized_weights:
-                        if normalized_weights:
-                            bt.logging.info(f"Setting weights: total_bmps = {total_bmps:.4f}")
+                        bt.logging.info(f"Setting weights: total_bmps = {total_bmps:.4f}")
 
-                            # Diagnostic: Show per-miner weights before sending
-                            bt.logging.debug("Final normalized weights (uid: weight, hotkey):")
-                            for uid, score in zip(uids, normalized_weights):
-                                hotkey = self.metagraph.hotkeys[uid]
-                                bt.logging.debug(f"  UID {uid:4d} | Weight = {score:.6f} | Hotkey = {hotkey}")
+                        bt.logging.debug("Final normalized weights (uid: weight, hotkey):")
+                        for uid, score in zip(uids, normalized_weights):
+                            hotkey = self.metagraph.hotkeys[uid]
+                            bt.logging.debug(f"  UID {uid:4d} | Weight = {score:.6f} | Hotkey = {hotkey}")
 
-                            # Sanity check: Sum of weights should be ~1.0
-                            weight_sum = sum(normalized_weights)
-                            if not (0.999 <= weight_sum <= 1.001):
-                                bt.logging.warning(f"⚠️ Normalized weights sum to {weight_sum:.6f}, not ≈1.0")
+                        weight_sum = sum(normalized_weights)
+                        if not (0.999 <= weight_sum <= 1.001):
+                            bt.logging.warning(f"⚠️ Normalized weights sum to {weight_sum:.6f}, not ≈1.0")
+
                         self.subtensor.set_weights(
                             wallet=self.wallet,
                             netuid=self.netuid,
@@ -281,13 +279,28 @@ class Validator:
                             wait_for_inclusion=True,
                         )
                         bt.logging.success(f"Weights set successfully at block {current_block}.")
+
+                        # Write epoch summary with uid, bmp, and weight
+                        block = self.subtensor.get_current_block()
+                        path = os.path.join(merit_config.EPOCH_RESULTS_DIR, f"epoch_{block}.json")
+                        epoch_summary = {}
+                        for neuron in self.metagraph.neurons:
+                            if self._should_skip_neuron(neuron):
+                                continue
+                            hotkey = neuron.hotkey
+                            uid = neuron.uid
+                            score = self.state.get(hotkey, 0.0)
+                            weight = next((w for u, w in zip(uids, normalized_weights) if u == uid), 0.0)
+                            epoch_summary[hotkey] = {
+                                "uid": uid,
+                                "bmps": round(score, 6),
+                                "weight": round(weight, 6)
+                            }
+
+                        with open(path, "w") as f:
+                            json.dump(epoch_summary, f, indent=4)
                     else:
                         bt.logging.warning("All scores are zero, skipping setting weights.")
-
-                    block = self.subtensor.get_current_block()
-                    path = os.path.join(merit_config.EPOCH_RESULTS_DIR, f"epoch_{block}.json")
-                    with open(path, "w") as f:
-                        json.dump(self.state, f, indent=4)
 
                     self._clear_state()
                     self.state = {}
