@@ -80,6 +80,12 @@ class Validator:
         except ipaddress.AddressValueError:
             return False
 
+    def _should_skip_neuron(self, neuron) -> bool:
+        try:
+            return neuron.dividends > 0 or neuron.validator_trust > 0
+        except Exception:
+            return False
+
     async def _is_port_open(self, ip: str, port: int) -> bool:
         try:
             await asyncio.wait_for(asyncio.open_connection(ip, port), timeout=4.0)
@@ -126,44 +132,39 @@ class Validator:
     async def _background_pinger(self):
         while True:
             try:
-                self.ping_complete.clear()  # <- ADD THIS
+                self.ping_complete.clear()
 
                 self.metagraph.sync(subtensor=self.subtensor)
                 self.all_metagraphs_info = self._fetch_all_metagraphs_info()
                 bt.logging.debug("Starting background ping round...")
 
-                tasks = []
-                for neuron in self.metagraph.neurons:
-                    if self._should_skip_neuron(neuron):
-                        continue
-                    tasks.append(self.ping_miner(neuron))
+                # Fix: Track only non-skipped neurons for correct zipping
+                ping_targets = [
+                    neuron for neuron in self.metagraph.neurons
+                    if not self._should_skip_neuron(neuron)
+                ]
 
-                results = await asyncio.gather(*tasks, return_exceptions=True)
+                results = await asyncio.gather(
+                    *(self.ping_miner(neuron) for neuron in ping_targets),
+                    return_exceptions=True
+                )
 
                 self.valid_miners.clear()
-                for neuron, success in zip(self.metagraph.neurons, results):
-                    if self._should_skip_neuron(neuron):
-                        continue
+                for neuron, success in zip(ping_targets, results):
                     self.latest_ping_success[neuron.hotkey] = success
                     if success:
                         self.valid_miners.add(neuron.hotkey)
 
-                reachable_count = sum(self.latest_ping_success.values())
+                reachable_count = sum(self.latest_ping_success.get(hk, False) for hk in self.valid_miners)
                 bt.logging.success(f"Ping round complete. {reachable_count} miners reachable.")
                 self.first_ping_done = True
 
-                self.ping_complete.set()  # <- ADD THIS
+                self.ping_complete.set()
 
             except Exception as e:
                 bt.logging.error(f"Background pinger error: {e}")
 
             await asyncio.sleep(self.ping_frequency)
-
-    def _should_skip_neuron(self, neuron) -> bool:
-        try:
-            return neuron.dividends > 0 or neuron.validator_trust > 0
-        except Exception:
-            return False
 
     def _evaluate_miners(self):
         bt.logging.debug("Evaluating miners...")
