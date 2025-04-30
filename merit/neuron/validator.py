@@ -171,6 +171,13 @@ class Validator:
         self.state = {}
         evaluated_count = 0
 
+        # Pre-filter metagraphs to only valid foreign subnets
+        expected_subnets = [
+            info for info in self.all_metagraphs_info
+            if info.netuid not in (0, self.netuid)
+        ]
+        num_expected_subnets = len(expected_subnets)
+
         for neuron in self.metagraph.neurons:
             if self._should_skip_neuron(neuron):
                 continue
@@ -178,31 +185,29 @@ class Validator:
             hotkey = neuron.hotkey
             axon = neuron.axon_info
 
-            # Optional: Explicit axon IP check (defensive & clearer logging)
             if not self.is_valid_public_ipv4(axon.ip) or axon.port == 0:
                 bt.logging.debug(f"Skipping {hotkey}: Invalid axon IP or port ({axon.ip}:{axon.port})")
                 self.state[hotkey] = 0.0
                 continue
 
-            # Strict exclusion for unreachable miners
             if hotkey not in self.valid_miners:
                 bt.logging.debug(f"Miner {hotkey} was not pinged successfully or skipped. Assigning BMPs=0.0")
                 self.state[hotkey] = 0.0
                 continue
 
-            # Proceed only for validated miners
+            # Collect incentive values across expected subnets (use 0.0 where absent)
             incentives = []
-            for info in self.all_metagraphs_info:
-                if info.netuid in (0, self.netuid):
-                    continue
+            for info in expected_subnets:
                 hotkey_to_incentive = dict(zip(info.hotkeys, info.incentives))
-                if hotkey in hotkey_to_incentive:
-                    incentives.append(hotkey_to_incentive[hotkey])
+                incentives.append(hotkey_to_incentive.get(hotkey, 0.0))
 
-            avg_incentive = sum(incentives) / len(incentives) if incentives else 0.0
+            avg_incentive = sum(incentives) / num_expected_subnets if num_expected_subnets > 0 else 0.0
             bmps = avg_incentive * 1000
             self.state[hotkey] = bmps
-            bt.logging.debug(f"Miner {hotkey}: Incentives={incentives}, Avg={avg_incentive:.6f}, BMPs={bmps:.2f}")
+
+            bt.logging.debug(
+                f"Miner {hotkey}: Incentives={incentives}, Avg={avg_incentive:.6f}, BMPs={bmps:.2f}"
+            )
             evaluated_count += 1
 
         self._save_state()
