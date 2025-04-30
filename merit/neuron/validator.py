@@ -120,7 +120,7 @@ class Validator:
             return True
 
         except Exception as e:
-            bt.logging.debug(f"Ping exception for {neuron.hotkey}: {e}")
+            bt.logging.warning(f"Ping exception for {neuron.hotkey}: {e}")
             return False
 
     async def _background_pinger(self):
@@ -144,7 +144,7 @@ class Validator:
                 for neuron, success in zip(self.metagraph.neurons, results):
                     if self._should_skip_neuron(neuron):
                         continue
-                    self.latest_ping_success[neuron.hotkey] = bool(success)
+                    self.latest_ping_success[neuron.hotkey] = success
                     if success:
                         self.valid_miners.add(neuron.hotkey)
 
@@ -194,9 +194,9 @@ class Validator:
             for info in self.all_metagraphs_info:
                 if info.netuid in (0, self.netuid):
                     continue
-                if hotkey in info.hotkeys:
-                    idx = info.hotkeys.index(hotkey)
-                    incentives.append(info.incentives[idx])
+                hotkey_to_incentive = dict(zip(info.hotkeys, info.incentives))
+                if hotkey in hotkey_to_incentive:
+                    incentives.append(hotkey_to_incentive[hotkey])
 
             avg_incentive = sum(incentives) / len(incentives) if incentives else 0.0
             bmps = avg_incentive * 1000
