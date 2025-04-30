@@ -25,6 +25,7 @@ class Validator:
         os.makedirs(merit_config.EPOCH_RESULTS_DIR, exist_ok=True)
         self.latest_ping_success = {}
         self.valid_miners = set()
+        self.ping_complete = asyncio.Event()
         self.ping_task = None
         self.first_ping_done = False
         self.metagraph = self.subtensor.metagraph(netuid=self.netuid)
@@ -125,6 +126,8 @@ class Validator:
     async def _background_pinger(self):
         while True:
             try:
+                self.ping_complete.clear()  # <- ADD THIS
+
                 self.metagraph.sync(subtensor=self.subtensor)
                 self.all_metagraphs_info = self._fetch_all_metagraphs_info()
                 bt.logging.debug("Starting background ping round...")
@@ -148,6 +151,8 @@ class Validator:
                 reachable_count = sum(self.latest_ping_success.values())
                 bt.logging.success(f"Ping round complete. {reachable_count} miners reachable.")
                 self.first_ping_done = True
+
+                self.ping_complete.set()  # <- ADD THIS
 
             except Exception as e:
                 bt.logging.error(f"Background pinger error: {e}")
@@ -218,6 +223,7 @@ class Validator:
 
                 now = time.time()
                 if now - self.last_eval_time >= self.eval_frequency:
+                    await self.ping_complete.wait()
                     self._evaluate_miners()
                     self.last_eval_time = now
 
