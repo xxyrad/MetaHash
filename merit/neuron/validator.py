@@ -199,7 +199,7 @@ class Validator:
                 incentives.append(hotkey_to_incentive.get(hotkey, 0.0))
 
             avg_incentive = sum(incentives) / num_expected_subnets if num_expected_subnets > 0 else 0.0
-            bmps = avg_incentive * 1000
+            bmps = avg_incentive * 100000
             self.state[hotkey] = bmps
 
             bt.logging.debug(
