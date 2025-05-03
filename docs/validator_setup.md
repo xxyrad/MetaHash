@@ -83,14 +83,14 @@ python -m merit.scripts.run_validator --ping_frequency 120
 
 ## 6. Validator Behavior
 
-| Feature | Description |
-|---------|-------------|
-| **Dynamic Global Refresh** | Fetches full network miner info every epoch. |
-| **Hotkey-Specific Scoring** | Each registered hotkey is scored individually (no coldkey aggregation). |
+| Feature | Description                                                                     |
+|---------|---------------------------------------------------------------------------------|
+| **Dynamic Global Refresh** | Fetches full network miner info every epoch.                                    |
+| **Hotkey-Specific Scoring** | Each registered hotkey is scored individually (no coldkey aggregation).         |
 | **Incentive Averaging** | Rewards are averaged across **all active subnets** (excluding netuid 0 and 73). |
-| **BMPS Calculation** | `bmps = (sum incentives / (active_subnets - 2)) × 1000` |
-| **Ping Adjustments** | +0.1 for success, -0.025 for failure |
-| **Weight Submission** | Normalized weights submitted after each epoch. |
+| **BMPS Calculation** | `bmps = (sum incentives / (active_subnets - 2)) × 100,000`                      |
+| **Ping Adjustments** | -100% for failure                                                               |
+| **Weight Submission** | Normalized weights submitted after each epoch.                                  |
 
 ---
 
@@ -112,7 +112,7 @@ Deactivate virtual environment:
 deactivate
 ```
 
-Activate virtual environment (after reboot):
+Activate virtual environment:
 
 ```bash
 source venv/bin/activate

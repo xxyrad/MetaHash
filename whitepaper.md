@@ -65,15 +65,14 @@ Where:
 The **Bittensor Miner Participation Score (BMPS)** is:
 
 ```text
-bmps = average_incentive × 1000
+bmps = average_incentive × 100,000
 ```
 
 Then adjusted for liveness:
 
-| Event | Effect on BMPS |
-|-------|----------------|
-| Successful ping | `+0.1` |
-| Failed ping (after retries) | `-0.025` |
+| Event | Effect on BMPS    |
+|-------|-------------------|
+| Failed ping (after retries) | `bmps == 0.0` |
 
 ✅ **Ping** acts as a **small fine-tuning adjustment**,  
 ✅ **Incentives** remain the **dominant factor**.
@@ -109,17 +108,16 @@ Then adjusted for liveness:
 
 ## 6. Technical Parameters
 
-| Parameter | Value |
-|-----------|-------|
-| Subnet UID (Merit) | 73 |
+| Parameter | Value                |
+|-----------|----------------------|
+| Subnet UID (Merit) | 73                   |
 | Epoch Tempo | 360 blocks (~1 hour) |
-| Ping Timeout | 10 seconds |
-| Ping Retries | 2 |
-| Ping Success Bonus | +0.1 |
-| Ping Failure Penalty | -0.025 |
-| Max Validators | 64 |
-| Max Stored Epoch Files | 48 |
-| Default Network | finney |
+| Ping Timeout | 10 seconds           |
+| Ping Retries | 2                    |
+| Ping Failure Penalty | bmps == 0.0          |
+| Max Validators | 64                   |
+| Max Stored Epoch Files | 48                   |
+| Default Network | finney               |
 
 ---
 

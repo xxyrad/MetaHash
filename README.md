@@ -25,14 +25,14 @@ Merit is designed to promote real work, broad contribution, and fair validation.
 
 ## Incentive Mechanism
 
-| Step | Description |
-|------|-------------|
-| 1 | Validator fetches full Bittensor network info per epoch. |
+| Step | Description                                                              |
+|------|--------------------------------------------------------------------------|
+| 1 | Validator fetches full Bittensor network info per epoch.                 |
 | 2 | For each Merit hotkey, search all active subnets (excluding root/merit). |
-| 3 | Sum found incentives and divide by the total active subnets - 2. |
-| 4 | Compute: `bmps = average_incentive × 1000`. |
-| 5 | Apply ping adjustments: `+0.1` for success, `-0.025` for failure. |
-| 6 | Normalize and submit weights each epoch. |
+| 3 | Sum found incentives and divide by the total active subnets - 2.         |
+| 4 | Compute: `bmps = average_incentive × 100,000`.                           |
+| 5 | Apply ping adjustments: bmps == 0.0 for failure.                         |
+| 6 | Normalize and submit weights each epoch.                                 |
 
 ---
 
