@@ -48,6 +48,24 @@ class Miner:
         synapse.token = token
         return synapse
 
+    async def _periodic_registration_check(self, interval_seconds: int = 1800):
+        while True:
+            try:
+                self.metagraph = self.subtensor.metagraph(netuid=self.netuid)
+                hotkey = self.wallet.hotkey.ss58_address
+
+                if hotkey not in self.metagraph.hotkeys:
+                    bt.logging.error(f"❌ Miner hotkey {hotkey} is no longer registered on subnet {self.netuid}. "
+                                     f"Exiting.")
+                    self.axon.stop()
+                    exit(1)
+                else:
+                    bt.logging.debug(f"✅ Miner hotkey {hotkey} still registered on subnet {self.netuid}.")
+            except Exception as e:
+                bt.logging.error(f"⚠️ Registration check failed: {e}")
+
+            await asyncio.sleep(interval_seconds)
+
     def run(self):
         """
         Runs the miner indefinitely.
@@ -55,6 +73,7 @@ class Miner:
         bt.logging.info("Miner running...")
         try:
             loop = asyncio.get_event_loop()
+            loop.create_task(self._periodic_registration_check())
             loop.run_forever()
         except KeyboardInterrupt:
             bt.logging.warning("Miner shutting down...")

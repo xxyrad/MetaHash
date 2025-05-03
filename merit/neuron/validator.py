@@ -212,6 +212,33 @@ class Validator:
         skipped = total_neurons - evaluated_count
         bt.logging.info(f"Evaluated {evaluated_count} miners (others set to 0.0 = {skipped}).")
 
+    def _calculate_normalized_weights(self, uids, scores, burner_uid=0, burner_weight=0.75):
+        valid_miners = [(uid, score) for uid, score in zip(uids, scores) if uid != burner_uid]
+
+        if not valid_miners:
+            bt.logging.warning("No valid miners found. Assigning full weight to burner UID.")
+            return [burner_weight if uid == burner_uid else 0.0 for uid in uids]
+
+        ranked_miners = sorted(valid_miners, key=lambda x: x[1], reverse=True)
+
+        incentive_rewards = []
+        for rank, (uid, _) in enumerate(ranked_miners, start=1):
+            reward = (-1.038e-7 * (rank ** 3)) + (6.214e-5 * (rank ** 2)) - (0.0129 * rank) - 0.0118 + 1
+            incentive_rewards.append(max(reward, 0))
+
+        total_incentive_reward = sum(incentive_rewards)
+        if total_incentive_reward <= 0:
+            bt.logging.warning("Total incentive reward non-positive. Evenly distributing weights among valid miners.")
+            even_weight = (1.0 - burner_weight) / len(valid_miners)
+            miner_weights = {uid: even_weight for uid, _ in ranked_miners}
+        else:
+            miner_weights = {
+                uid: (reward / total_incentive_reward) * (1 - burner_weight)
+                for (uid, _), reward in zip(ranked_miners, incentive_rewards)
+            }
+
+        return [burner_weight if uid == burner_uid else miner_weights.get(uid, 0.0) for uid in uids]
+
     async def run(self):
         bt.logging.info("Validator running...")
 
@@ -249,25 +276,21 @@ class Validator:
                         score = self.state.get(neuron.hotkey, 0.0)
                         scores.append(score)
 
+                    # Ensure UID 0 (burner) is included for burn incentive logic
+                    burner_uid = 0
+                    if burner_uid not in uids:
+                        bt.logging.debug(f"Inserting burner UID {burner_uid} for burn allocation.")
+                        uids.insert(0, burner_uid)
+                        scores.insert(0, 0.0)
+
                     total_bmps = sum(scores)
                     if total_bmps == 0 and self.no_zero_weights and len(scores) > 0:
-                        bt.logging.warning("All scores are zero, but --no_zero_weights is set. Assigning even weights.")
-                        normalized_weights = [1.0 / len(scores)] * len(scores)
+                        bt.logging.warning("All scores are zero, but --no_zero_weights is set. "
+                                           "Assigning 75% to burner UID and 25% evenly.")
+                        distributed_weight = 0.25 / len(scores)
+                        normalized_weights = [0.75 if uid == burner_uid else distributed_weight for uid in uids]
                     elif total_bmps > 0:
-                        ### Developed by @Taogon
-                        # Rank miners by their scores
-                        ranked_miners = sorted(zip(uids, scores), key=lambda x: x[1], reverse=True)
-
-                        # Calculate incentive rewards based on rank
-                        incentive_rewards = []
-                        for rank, (uid, score) in enumerate(ranked_miners, start=1):
-                            incentive_reward = (-1.038e-7 * (rank ** 3)) + (6.214e-5 * (rank ** 2)) - (0.0129 * rank) - 0.0118 + 1
-                            incentive_rewards.append((uid, incentive_reward))
-
-                        # Apply incentive rewards to normalized weights
-                        total_incentive_reward = sum(reward for _, reward in incentive_rewards)
-                        normalized_weights = [reward / total_incentive_reward for _, reward in incentive_rewards]
-                        ### End of @Taogon
+                        normalized_weights = self._calculate_normalized_weights(uids, scores)
                     else:
                         normalized_weights = []
 
