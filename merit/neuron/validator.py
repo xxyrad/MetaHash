@@ -213,31 +213,48 @@ class Validator:
         bt.logging.info(f"Evaluated {evaluated_count} miners (others set to 0.0 = {skipped}).")
 
     def _calculate_normalized_weights(self, uids, scores, burner_uid=0, burner_weight=0.75):
-        valid_miners = [(uid, score) for uid, score in zip(uids, scores) if uid != burner_uid]
+        """
+        Calculates normalized weights using an S-curve incentive model.
+        UID 0 always receives `burner_weight` (default 75%).
+        Only miners with score > 0.0 share the remaining 25%.
+        """
+
+        # Filter out burner UID and zero-score miners
+        valid_miners = [(uid, score) for uid, score in zip(uids, scores) if uid != burner_uid and score > 0.0]
 
         if not valid_miners:
-            bt.logging.warning("No valid miners found. Assigning full weight to burner UID.")
+            bt.logging.warning("No valid scoring miners found. Assigning full weight to burner UID.")
             return [burner_weight if uid == burner_uid else 0.0 for uid in uids]
 
+        # Rank valid miners
         ranked_miners = sorted(valid_miners, key=lambda x: x[1], reverse=True)
 
+        # Apply S-curve reward formula
         incentive_rewards = []
         for rank, (uid, _) in enumerate(ranked_miners, start=1):
             reward = (-1.038e-7 * (rank ** 3)) + (6.214e-5 * (rank ** 2)) - (0.0129 * rank) - 0.0118 + 1
             incentive_rewards.append(max(reward, 0))
 
-        total_incentive_reward = sum(incentive_rewards)
-        if total_incentive_reward <= 0:
-            bt.logging.warning("Total incentive reward non-positive. Evenly distributing weights among valid miners.")
+        total_incentive = sum(incentive_rewards)
+        if total_incentive <= 0:
+            bt.logging.warning("Total incentive is non-positive. Distributing 25% equally among valid miners.")
             even_weight = (1.0 - burner_weight) / len(valid_miners)
             miner_weights = {uid: even_weight for uid, _ in ranked_miners}
         else:
             miner_weights = {
-                uid: (reward / total_incentive_reward) * (1 - burner_weight)
+                uid: (reward / total_incentive) * (1.0 - burner_weight)
                 for (uid, _), reward in zip(ranked_miners, incentive_rewards)
             }
 
-        return [burner_weight if uid == burner_uid else miner_weights.get(uid, 0.0) for uid in uids]
+        # Assemble full weight vector
+        final_weights = []
+        for uid in uids:
+            if uid == burner_uid:
+                final_weights.append(burner_weight)
+            else:
+                final_weights.append(miner_weights.get(uid, 0.0))
+
+        return final_weights
 
     async def run(self):
         bt.logging.info("Validator running...")
@@ -276,21 +293,23 @@ class Validator:
                         score = self.state.get(neuron.hotkey, 0.0)
                         scores.append(score)
 
-                    # Ensure UID 0 (burner) is included for burn incentive logic
                     burner_uid = 0
                     if burner_uid not in uids:
                         bt.logging.debug(f"Inserting burner UID {burner_uid} for burn allocation.")
                         uids.insert(0, burner_uid)
                         scores.insert(0, 0.0)
 
-                    total_bmps = sum(scores)
+                    total_bmps = sum(score for uid, score in zip(uids, scores) if uid != burner_uid)
+
                     if total_bmps == 0 and self.no_zero_weights and len(scores) > 0:
                         bt.logging.warning("All scores are zero, but --no_zero_weights is set. "
-                                           "Assigning 75% to burner UID and 25% evenly.")
-                        distributed_weight = 0.25 / len(scores)
+                                           "Assigning 75% to burner UID and 25% evenly among others.")
+                        eligible_count = len([uid for uid in uids if uid != burner_uid])
+                        distributed_weight = (1.0 - 0.75) / eligible_count if eligible_count > 0 else 0.0
                         normalized_weights = [0.75 if uid == burner_uid else distributed_weight for uid in uids]
                     elif total_bmps > 0:
-                        normalized_weights = self._calculate_normalized_weights(uids, scores)
+                        normalized_weights = self._calculate_normalized_weights(uids, scores, burner_uid=burner_uid,
+                                                                                burner_weight=0.75)
                     else:
                         normalized_weights = []
 
