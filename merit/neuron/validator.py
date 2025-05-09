@@ -32,6 +32,17 @@ class Validator:
         self.state = self._load_state()
         self.health = self._load_health()
         self.all_metagraphs_info = self._fetch_all_metagraphs_info()
+        self.eval_rounds = 0
+
+    async def cleanup(self):
+        """
+        Gracefully close all async resources (e.g., aiohttp sessions).
+        """
+        bt.logging.info("Validator cleanup: Closing Dendrite session.")
+        try:
+            await self.dendrite.close()
+        except Exception as e:
+            bt.logging.error(f"Error closing dendrite session: {e}")
 
     def _fetch_all_metagraphs_info(self):
         try:
@@ -67,6 +78,9 @@ class Validator:
             json.dump(self.health, f, indent=4)
 
     def _prune_epoch_results(self, keep_last=5):
+        if not os.path.isdir(merit_config.EPOCH_RESULTS_DIR):
+            bt.logging.warning(f"Epoch results directory {merit_config.EPOCH_RESULTS_DIR} not found. Skipping prune.")
+            return
         files = sorted([
             f for f in os.listdir(merit_config.EPOCH_RESULTS_DIR) if f.startswith("epoch_")
         ])
@@ -149,15 +163,24 @@ class Validator:
                 )
 
                 self.valid_miners.clear()
-                for neuron, success in zip(ping_targets, results):
+                for neuron, result in zip(ping_targets, results):
+                    if isinstance(result, Exception):
+                        bt.logging.warning(f"Exception pinging {neuron.hotkey}: {result}")
+                        success = False
+                    else:
+                        success = result
+
                     self.latest_ping_success[neuron.hotkey] = success
                     if success:
                         self.valid_miners.add(neuron.hotkey)
 
-                reachable_count = sum(self.latest_ping_success.get(hk, False) for hk in self.valid_miners)
+                total_targets = len(ping_targets)
+                failed = total_targets - len(self.valid_miners)
+                reachable_count = len(self.valid_miners)
+                bt.logging.info(
+                    f"{len(self.valid_miners)} reachable, {failed} unreachable out of {total_targets} ping targets.")
                 bt.logging.success(f"Ping round complete. {reachable_count} miners reachable.")
                 self.first_ping_done = True
-
                 self.ping_complete.set()
 
             except Exception as e:
@@ -193,24 +216,31 @@ class Validator:
                 self.state[hotkey] = 0.0
                 continue
 
-            incentives = []
+            incentives_with_netuid = []
             for info in expected_subnets:
                 hotkey_to_incentive = dict(zip(info.hotkeys, info.incentives))
-                incentives.append(hotkey_to_incentive.get(hotkey, 0.0))
+                incentive = hotkey_to_incentive.get(hotkey, 0.0)
+                incentives_with_netuid.append((info.netuid, incentive))
+
+            incentives = [val for _, val in incentives_with_netuid]
 
             avg_incentive = sum(incentives) / num_expected_subnets if num_expected_subnets > 0 else 0.0
             bmps = avg_incentive * 100000
             self.state[hotkey] = bmps
 
             bt.logging.debug(
-                f"Miner {hotkey}: Incentives={incentives}, Avg={avg_incentive:.6f}, BMPs={bmps:.2f}"
+                f"Miner {hotkey}: Subnet Incentives = {incentives_with_netuid}, "
+                f"Avg = {avg_incentive:.6f}, BMPs = {bmps:.2f}"
             )
+
             evaluated_count += 1
 
         self._save_state()
         total_neurons = len([n for n in self.metagraph.neurons if not self._should_skip_neuron(n)])
         skipped = total_neurons - evaluated_count
         bt.logging.info(f"Evaluated {evaluated_count} miners (others set to 0.0 = {skipped}).")
+        self.eval_rounds += 1
+        bt.logging.info(f"Evaluation round #{self.eval_rounds} complete.")
 
     def _calculate_normalized_weights(self, uids, scores, burner_uid=0, burner_weight=0.75):
         """
@@ -265,7 +295,12 @@ class Validator:
         try:
             while True:
                 current_block = self.subtensor.get_current_block()
-                my_uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
+                try:
+                    my_uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
+                except ValueError:
+                    bt.logging.error("Validator hotkey not found in metagraph. Skipping weight set.")
+                    await asyncio.sleep(30)
+                    continue
                 blocks_since_update = self.subtensor.blocks_since_last_update(netuid=self.netuid, uid=my_uid)
 
                 bt.logging.debug(
@@ -278,7 +313,7 @@ class Validator:
 
                 now = time.time()
                 if now - self.last_eval_time >= self.eval_frequency:
-                    await self.ping_complete.wait()
+                    await asyncio.shield(self.ping_complete.wait())
                     self._evaluate_miners()
                     self.last_eval_time = now
 
@@ -333,7 +368,8 @@ class Validator:
                             version_key=self.metagraph.hparams.weights_version,
                             wait_for_inclusion=True,
                         )
-                        bt.logging.success(f"Weights set successfully at block {current_block}.")
+                        bt.logging.success(
+                            f"Weights set successfully at block {current_block} (Eval round #{self.eval_rounds}).")
 
                         # Write epoch summary with uid, bmp, and weight
                         block = self.subtensor.get_current_block()
@@ -349,7 +385,8 @@ class Validator:
                             epoch_summary[hotkey] = {
                                 "uid": uid,
                                 "bmps": round(score, 6),
-                                "weight": round(weight, 6)
+                                "weight": round(weight, 6),
+                                "timestamp": time.time()
                             }
 
                         with open(path, "w") as f:
@@ -370,4 +407,12 @@ class Validator:
         finally:
             if self.ping_task:
                 self.ping_task.cancel()
-                await self.ping_task
+                try:
+                    await self.ping_task
+                except asyncio.CancelledError:
+                    bt.logging.debug("Ping task cancelled cleanly.")
+
+            start = time.time()
+            await self.cleanup()
+            bt.logging.info(f"Validator shutdown complete in {time.time() - start:.2f}s.")
+
