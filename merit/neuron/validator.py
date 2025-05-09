@@ -33,6 +33,8 @@ class Validator:
         self.health = self._load_health()
         self.all_metagraphs_info = self._fetch_all_metagraphs_info()
         self.eval_rounds = 0
+        self.ping_retry_attempts = config.ping_retry_attempts or 1
+        self.ping_retry_delay = config.ping_retry_delay or 0.5
 
     async def cleanup(self):
         """
@@ -116,8 +118,13 @@ class Validator:
             bt.logging.debug(f"Skipping invalid IP/port for {neuron.hotkey}: {ip}:{port}")
             return False
 
-        if not await self._is_port_open(ip, port):
-            bt.logging.debug(f"Port closed for {neuron.hotkey}: {ip}:{port}")
+        for attempt in range(self.ping_retry_attempts):
+            if await self._is_port_open(ip, port):
+                break
+            if attempt < self.ping_retry_attempts - 1:
+                await asyncio.sleep(self.ping_retry_delay)
+        else:
+            bt.logging.debug(f"Port closed after {self.ping_retry_attempts} attempts for {neuron.hotkey}")
             return False
 
         try:
