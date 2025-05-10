@@ -42,7 +42,7 @@ class Validator:
         """
         bt.logging.info("Validator cleanup: Closing Dendrite session.")
         try:
-            await self.dendrite.close()
+            await self.dendrite.aclose_session()
         except Exception as e:
             bt.logging.error(f"Error closing dendrite session: {e}")
 
