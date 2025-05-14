@@ -35,6 +35,7 @@ class Validator:
         self.eval_rounds = 0
         self.ping_retry_attempts = config.ping_retry_attempts or 1
         self.ping_retry_delay = config.ping_retry_delay or 0.5
+        self.latest_ping_times = {}
 
     async def cleanup(self):
         """
@@ -143,8 +144,10 @@ class Validator:
                 bt.logging.debug(f"TOTP failed for {neuron.hotkey}")
                 return False
 
+            self.latest_ping_times[neuron.hotkey] = time.time()
             bt.logging.debug(f"Ping success for {neuron.hotkey}")
             return True
+
 
         except Exception as e:
             bt.logging.warning(f"Ping exception for {neuron.hotkey}: {e}")
@@ -378,21 +381,37 @@ class Validator:
                         bt.logging.success(
                             f"Weights set successfully at block {current_block} (Eval round #{self.eval_rounds}).")
 
-                        # Write epoch summary with uid, bmp, and weight
                         block = self.subtensor.get_current_block()
                         path = os.path.join(merit_config.EPOCH_RESULTS_DIR, f"epoch_{block}.json")
                         epoch_summary = {}
+
                         for neuron in self.metagraph.neurons:
                             if self._should_skip_neuron(neuron):
                                 continue
+
                             hotkey = neuron.hotkey
                             uid = neuron.uid
                             score = self.state.get(hotkey, 0.0)
                             weight = next((w for u, w in zip(uids, normalized_weights) if u == uid), 0.0)
+
+                            subnet_incentives = {}
+                            for info in self.all_metagraphs_info:
+                                if info.netuid in (0, self.netuid):
+                                    continue
+                                if hotkey in info.hotkeys:
+                                    index = info.hotkeys.index(hotkey)
+                                    subnet_incentives[info.netuid] = round(info.incentives[index], 6)
+
+                            ping_success = self.latest_ping_success.get(hotkey, False)
+                            last_ping_ts = self.latest_ping_times.get(hotkey, 0.0)
+
                             epoch_summary[hotkey] = {
                                 "uid": uid,
-                                "bmps": round(score, 6),
                                 "weight": round(weight, 6),
+                                "bmps": round(score, 6),
+                                "subnet_incentives": subnet_incentives,
+                                "ping_success": ping_success,
+                                "last_ping_timestamp": last_ping_ts,
                                 "timestamp": time.time()
                             }
 
