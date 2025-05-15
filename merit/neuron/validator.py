@@ -33,8 +33,8 @@ class Validator:
         self.health = self._load_health()
         self.all_metagraphs_info = self._fetch_all_metagraphs_info()
         self.eval_rounds = 0
-        self.ping_retry_attempts = config.ping_retry_attempts or 1
-        self.ping_retry_delay = config.ping_retry_delay or 0.5
+        self.ping_retry_attempts = merit_config.PING_RETRY_ATTEMPTS
+        self.ping_retry_delay = merit_config.PING_RETRY_DELAY
         self.latest_ping_times = {}
 
     async def cleanup(self):
