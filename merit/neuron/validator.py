@@ -80,14 +80,14 @@ class Validator:
         with open(merit_config.HEALTH_FILE, "w") as f:
             json.dump(self.health, f, indent=4)
 
-    def _prune_epoch_results(self, keep_last=5):
+    def _prune_epoch_results(self):
         if not os.path.isdir(merit_config.EPOCH_RESULTS_DIR):
             bt.logging.warning(f"Epoch results directory {merit_config.EPOCH_RESULTS_DIR} not found. Skipping prune.")
             return
         files = sorted([
             f for f in os.listdir(merit_config.EPOCH_RESULTS_DIR) if f.startswith("epoch_")
         ])
-        for old_file in files[:-keep_last]:
+        for old_file in files[:-merit_config.MAX_EPOCH_FILES]:
             os.remove(os.path.join(merit_config.EPOCH_RESULTS_DIR, old_file))
 
     def is_valid_public_ipv4(self, ip: str) -> bool:
@@ -441,4 +441,3 @@ class Validator:
             start = time.time()
             await self.cleanup()
             bt.logging.info(f"Validator shutdown complete in {time.time() - start:.2f}s.")
-
