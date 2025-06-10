@@ -1,117 +1,76 @@
-# Merit Subnet (Bittensor NetUID 73)
+<div align="center">
+<picture>
+    <source srcset="icon48.png"  media="(prefers-color-scheme: dark)">
+    <source srcset="icon48.png"  media="(prefers-color-scheme: light)">
+    <img src="icon48.png">
+</picture>
+
+# **MetaHash Subnet (sn73)** <!-- omit in toc -->
+[![Discord Chat](https://img.shields.io/discord/308323056592486420.svg)](https://discord.gg/bittensor)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Twitter Follow](https://img.shields.io/twitter/follow/MetaHashSubnet?style=social)](https://twitter.com/MetaHashSubnet)
+
+[🌐 MetaHash Portal](https://metahash.io) • [🐦 Twitter](https://twitter.com/MetaHashSubnet) • [⛏️ Mining Guide](docs/miner.md) • [🧑‍🏫 Validator Guide](docs/validator.md)
+</div>
 
 ---
 
-## Overview
+## 🔍 Overview
 
-Merit is a Bittensor subnet that rewards miners for their **active participation across other Bittensor subnets**.
+**MetaHash** is a **liquidity-driven Bittensor subnet (sn73)** that unlocks over-the-counter (OTC) funding for miners while harvesting **high-value alpha** from every collaborating subnet.  
+Think of it as **TaoHash for subnets**—but instead of purely trading TAO, we trade **liquidity for exclusive, non-public alpha** that we never resell.
 
-Validators evaluate **registered hotkeys** based on their cross-subnet activity and uptime, assigning dynamic weights according to a calculated **Bittensor Miner Participation Score (BMPS)**.
+- **For Miners:** Instantly access liquidity without dumping your own subnet tokens and depressing prices.  
+- **For Validators & Holders:** Accumulate `$META` to tap into a continuous stream of cross-subnet alpha.  
+- **For the Network:** Bootstrap healthy capital flow and cross-pollination of ideas, accelerating innovation across the entire Bittensor ecosystem.
 
-Merit is designed to promote real work, broad contribution, and fair validation.
+## 🏗️ How MetaHash Works
 
----
+1. **Liquidity Requests** – Miners from any subnet submit OTC liquidity requests to MetaHash validators.  
+2. **Alpha Pledge** – In exchange, miners commit to share a portion of their freshly mined alpha (models, datasets, signals) at a negotiated discount.  
+3. **Liquidity Provision** – MetaHash mints or transfers `$META` to the miner, providing immediate liquidity without open-market sell pressure on the miner’s native token.  
+4. **Alpha Settlement** – Validators verify the delivered alpha and distribute it to `$META` holders via periodic on-chain releases.
 
-## Key Features
+> **Why a Discount?**  
+> Miners receive capital up-front; MetaHash receives alpha at below-market cost. Both sides win while preserving price integrity on the miner’s home subnet.
 
-- ✅ **Hotkey-Based Rewards**: Each hotkey registered on Merit is scored individually.
-- ✅ **Cross-Subnet Incentive Averaging**: Miners must be active across many subnets to maximize rewards.
-- ✅ **Dynamic Global Refresh**: Validator refreshes all miner incentives every epoch.
-- ✅ **TOTP-Secured Liveness Checks**: Pings confirm miners are live and serving.
-- ✅ **Fair Scoring System**: Ping rewards are minor compared to true network participation.
-- ✅ **Background Health Monitoring**: Optional miner uptime history tracking.
+## ⚙️ Subnet Mechanics
 
----
+### 🧑‍🏫 Validator Role
+- Review and price OTC liquidity requests.  
+- Custody, evaluate and curate incoming alpha streams.  
+- Distribute validated alpha drops to `$META` holders.  
+- Assign weights on the **Bittensor Blockchain** based on timely and accurate alpha delivery.
 
-## Incentive Mechanism
+### ⛏️ Miner Role
+- Request liquidity through MetaHash’s OTC desk.  
+- Provide high-quality, non-leaked alpha on schedule.  
+- Continuously improve alpha quality to earn better terms and higher weights.
 
-| Step | Description                                                              |
-|------|--------------------------------------------------------------------------|
-| 1 | Validator fetches full Bittensor network info per epoch.                 |
-| 2 | For each Merit hotkey, search all active subnets (excluding root/merit). |
-| 3 | Sum found incentives and divide by the total active subnets - 2.         |
-| 4 | Compute: `bmps = average_incentive × 100,000`.                           |
-| 5 | Apply ping adjustments: bmps == 0.0 for failure.                         |
-| 6 | Normalize and submit weights each epoch.                                 |
+### 🎯 Incentive Mechanism
 
----
+| Actor | Gives | Receives |
+|-------|-------|----------|
+| **Miner** | Future alpha (discounted) | Immediate `$META` liquidity |
+| **Validator** | Liquidity + verification service | Stream of discounted alpha |
+| **$META Holder** | Market demand for `$META` | Access to exclusive alpha drops |
 
-## Getting Started
+- **Token:** `$META` (sn73 alpha)  
+- **Utility:** Governance + access key to the alpha vault  
+- **Demand Drivers:** Validators must hold `$META` to redeem alpha; traders accumulate to speculate on future unlocks.
 
-### 1. Install Dependencies
+## 🔄 OTC Deal Flow
 
-```bash
-sudo apt -y install python3-venv python3-pip python-is-python3
-sudo apt -y install ntpsec
-```
+```mermaid
+flowchart LR
+    Miner[Miner Subnet]
+    Request>Liquidity Request]
+    MetaHash[MetaHash Validators]
+    Liquidity[$META Liquidity]
+    Alpha[Alpha Stream]
+    Holders[$META Holders]
 
-### 2. Clone and Set Up Environment
-
-```bash
-git clone https://github.com/fx-integral/merit.git
-cd merit
-python3 -m venv venv
-source venv/bin/activate
-pip install uv
-uv pip install -r requirements.txt
-```
-
----
-
-## Running a Miner
-
-```bash
-python -m merit.scripts.run_miner \
-    --subtensor.network finney \
-    --wallet.name {your_wallet_name} \
-    --wallet.hotkey {your_hotkey_name} \
-    --netuid 73 \
-    --axon.port {port_number} \
-    --logging.debug
-```
-
----
-
-## Running a Validator
-
-```bash
-python -m merit.scripts.run_validator \
-    --subtensor.network finney \
-    --wallet.name {your_wallet_name} \
-    --wallet.hotkey {your_hotkey_name} \
-    --netuid 73 \
-    --logging.debug
-```
-
-Optional Arguments:
-
-| Argument | Description | Default |
-|----------|-------------|---------|
-| `--ping_frequency` | Seconds between background pings | 120 |
-
----
-
-## Important Notes
-
-- **Hotkey-Specific Scoring**: Coldkeys are not aggregated — only hotkeys matter.
-- **Dynamic Subnet Participation**: The more subnets a miner actively participates in, the higher the score.
-- **Liveness Matters**: Online miners gain slight bonus; offline miners are lightly penalized.
-- **No Validator Restart Needed**: Incentives refresh automatically each epoch.
-
----
-
-## Documentation
-
-- 📄 [Whitepaper](whitepaper.md)
-- 📄 [Validator Setup Guide](docs/validator_setup.md)
-- 📄 [Miner Setup Guide](docs/miner_setup.md)
-- 📄 [Roadmap](roadmap.md)
-
----
-
-## License
-
-This project is licensed under the MIT License.  
-See [LICENSE](LICENSE) for details.
-
----
+    Miner -- Request --> MetaHash
+    MetaHash -- Liquidity --> Miner
+    Miner -- Alpha --> MetaHash
+    MetaHash -- Curated Alpha --> Holders
